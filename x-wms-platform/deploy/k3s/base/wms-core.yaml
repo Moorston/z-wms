@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-core
+  labels:
+    app: wms-core
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wms-core
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: wms-core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      containers:
+        - name: wms-core
+          image: wms-core:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+          envFrom:
+            - configMapRef:
+                name: wms-env
+            - secretRef:
+                name: wms-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: dumps
+              mountPath: /app/dumps
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: dumps
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-core
+  labels:
+    app: wms-core
+spec:
+  selector:
+    app: wms-core
+  ports:
+    - port: 8081
+      targetPort: 8081
+      name: http
+  type: ClusterIP

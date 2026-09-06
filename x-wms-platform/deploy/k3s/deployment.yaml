@@ -1,0 +1,240 @@
+# X WMS K3s 部署清单
+# 部署：kubectl apply -f k3s/
+# 包含：4个微服务Deployment+Service+ConfigMap+HPA
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wms
+  labels:
+    app: x-wms
+---
+# ConfigMap：公共配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wms-common-config
+  namespace: wms
+data:
+  NACOS_ADDR: "nacos.wms.svc:8848"
+  ORACLE_HOST: "oracle.wms.svc"
+  ORACLE_PORT: "1521"
+  REDIS_HOST: "redis.wms.svc"
+  REDIS_PORT: "6379"
+  KAFKA_ADDR: "kafka.wms.svc:9092"
+  CK_HOST: "clickhouse.wms.svc"
+---
+# wms-core 部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-core
+  namespace: wms
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: wms-core
+  template:
+    metadata:
+      labels:
+        app: wms-core
+    spec:
+      containers:
+        - name: wms-core
+          image: xwms/wms-core:1.0.0
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: wms-common-config
+          env:
+            - name: ORACLE_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: wms-secrets
+                  key: oracle-pwd
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /api/actuator/health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/actuator/health
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-core
+  namespace: wms
+spec:
+  selector:
+    app: wms-core
+  ports:
+    - port: 8081
+      targetPort: 8081
+---
+# HPA：自动扩缩容
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wms-core-hpa
+  namespace: wms
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wms-core
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# wms-base 部署（2副本）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-base
+  namespace: wms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wms-base
+  template:
+    metadata:
+      labels:
+        app: wms-base
+    spec:
+      containers:
+        - name: wms-base
+          image: xwms/wms-base:1.0.0
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: wms-common-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-base
+  namespace: wms
+spec:
+  selector:
+    app: wms-base
+  ports:
+    - port: 8082
+      targetPort: 8082
+---
+# wms-analytics 部署（2副本）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-analytics
+  namespace: wms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wms-analytics
+  template:
+    metadata:
+      labels:
+        app: wms-analytics
+    spec:
+      containers:
+        - name: wms-analytics
+          image: xwms/wms-analytics:1.0.0
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: wms-common-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-analytics
+  namespace: wms
+spec:
+  selector:
+    app: wms-analytics
+  ports:
+    - port: 8083
+      targetPort: 8083
+---
+# wms-integration 部署（2副本）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-integration
+  namespace: wms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wms-integration
+  template:
+    metadata:
+      labels:
+        app: wms-integration
+    spec:
+      containers:
+        - name: wms-integration
+          image: xwms/wms-integration:1.0.0
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: wms-common-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-integration
+  namespace: wms
+spec:
+  selector:
+    app: wms-integration
+  ports:
+    - port: 8084
+      targetPort: 8084

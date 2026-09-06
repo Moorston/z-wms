@@ -1,0 +1,56 @@
+# X WMS 后端服务通用 Dockerfile
+# 多阶段构建: 构建阶段 + 运行阶段
+# 构建参数: JAR_FILE (服务名), PORT (服务端口)
+
+# ========== 阶段1: 构建 ==========
+FROM maven:3.9-eclipse-temurin-25 AS builder
+ARG JAR_FILE
+WORKDIR /build
+
+# 缓存依赖
+COPY backend/pom.xml .
+COPY backend/wms-common/pom.xml wms-common/
+COPY backend/wms-base/pom.xml wms-base/
+COPY backend/wms-core/pom.xml wms-core/
+COPY backend/wms-analytics/pom.xml wms-analytics/
+COPY backend/wms-integration/pom.xml wms-integration/
+RUN mvn -B dependency:go-offline -pl ${JAR_FILE} -am || true
+
+# 复制源码并构建
+COPY backend/ .
+RUN mvn -B clean package -pl ${JAR_FILE} -am -DskipTests -Dmaven.test.skip=true
+
+# ========== 阶段2: 运行 ==========
+FROM eclipse-temurin:25-jre-alpine
+ARG JAR_FILE
+ARG PORT=8080
+
+LABEL maintainer="X WMS Team"
+LABEL app="x-wms"
+LABEL service=${JAR_FILE}
+
+# 安装必要工具
+RUN apk add --no-cache curl tzdata && \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    addgroup -S wms && adduser -S wms -G wms
+
+WORKDIR /app
+
+# 复制JAR
+COPY --from=builder /build/${JAR_FILE}/target/${JAR_FILE}.jar app.jar
+
+# 运行时用户
+USER wms
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/actuator/health || exit 1
+
+# JVM参数
+ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/dumps -Xms512m -Xmx1024m"
+ENV SPRING_PROFILES_ACTIVE=prod
+
+EXPOSE ${PORT}
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

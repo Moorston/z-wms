@@ -1,0 +1,73 @@
+# ============================================================
+# WMS Core Service 配置 (wms-core.yaml)
+# 端口: 8081 | 核心业务：入库/出库/库存/批次/作业
+# Nacos DataId: wms-core.yaml, Group: WMS_GROUP
+# ============================================================
+
+server:
+  port: 8081
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: wms-core
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        weight: 1
+        metadata:
+          version: 1.0.0
+          region: default
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        file-extension: yaml
+        shared-configs:
+          - data-id: wms-common.yaml
+            group: WMS_GROUP
+            refresh: true
+
+# 业务配置
+wms:
+  inventory:
+    # 库存扣减重试次数
+    deduct-retry: 3
+    # 库存预占超时时间（分钟）
+    allocate-timeout-minutes: 30
+  batch:
+    # 近效期预警天数
+    near-expire-days: 30
+    # FEFO排序启用
+    fefo-enabled: true
+  work-task:
+    # 任务领取锁超时（秒）
+    claim-lock-timeout: 300
+    # PDA实时推送通道
+    pda-channel: wms:pda:notify
+
+# Kafka Topic配置
+kafka:
+  topics:
+    inventory-events: wms-inventory-events
+    batch-events: wms-batch-events
+    order-inbound: wms-order-inbound
+    express-get: wms-express-get
+    integration-notify: wms-integration-notify
+    ai-events: wms-ai-events
+
+# Feign配置
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 5000
+        read-timeout: 10000
+  httpclient:
+    enabled: true
+    max-connections: 200
+    max-connections-per-route: 50

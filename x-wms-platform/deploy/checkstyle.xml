@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java, properties, xml"/>
+
+    <!-- 文件长度 -->
+    <module name="FileLength">
+        <property name="max" value="2000"/>
+    </module>
+
+    <!-- 行长度 -->
+    <module name="LineLength">
+        <property name="max" value="200"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+    </module>
+
+    <module name="TreeWalker">
+        <!-- 导入规范 -->
+        <module name="AvoidStarImport">
+            <!-- 豁免高频注解/工具包 star import（checkstyle excludes 仅精确匹配，不支持前缀；业务包豁免见 suppressions） -->
+            <property name="excludes" value="com.baomidou.mybatisplus.annotation,org.springframework.web.bind.annotation,java.util"/>
+        </module>
+        <module name="UnusedImports"/>
+        <module name="RedundantImport"/>
+        <module name="ImportOrder">
+            <property name="groups" value="java,javax,org,com,com.xwms"/>
+            <property name="separated" value="true"/>
+            <property name="sortStaticImportsAlphabetically" value="true"/>
+        </module>
+
+        <!-- 命名规范 -->
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+        <module name="TypeName"/>
+        <module name="MethodName"/>
+        <module name="ConstantName"/>
+        <module name="LocalVariableName"/>
+        <module name="MemberName"/>
+        <module name="ParameterName"/>
+
+        <!-- 代码块 -->
+        <!-- NeedBraces 注释：google-java-format 不自动加括号，1077 处单行 if 手工成本高，风格偏好 -->
+        <!-- <module name="NeedBraces"/> -->
+        <module name="LeftCurly"/>
+        <module name="RightCurly"/>
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+        </module>
+
+        <!-- 编码规范 -->
+        <module name="EmptyStatement"/>
+        <module name="EqualsHashCode"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+        <module name="StringLiteralEquality"/>
+        <module name="FallThrough"/>
+        <module name="MissingSwitchDefault"/>
+        <module name="DefaultComesLast"/>
+
+        <!-- 修饰符 -->
+        <module name="ModifierOrder"/>
+        <module name="RedundantModifier"/>
+
+        <!-- 空白 -->
+        <module name="WhitespaceAfter"/>
+        <!-- WhitespaceAround 注释：google-java-format AOSP 与该规则冲突（apply 后反而增），交给 spotless 管 -->
+        <!-- <module name="WhitespaceAround"/> -->
+        <module name="NoWhitespaceBefore"/>
+        <module name="GenericWhitespace"/>
+        <module name="MethodParamPad"/>
+        <module name="ParenPad"/>
+
+        <!-- 注解 -->
+        <module name="AnnotationLocation"/>
+        <!-- AnnotationOnSameLine 注释：注解是否同行是风格偏好非缺陷，6673 处 -->
+        <!-- <module name="AnnotationOnSameLine"/> -->
+
+        <!-- 其他 -->
+        <module name="UpperEll"/>
+        <module name="ArrayTypeStyle"/>
+        <module name="OuterTypeFilename"/>
+        <!-- TodoComment 注释：TODO 注释是开发期标记非缺陷，166 处 -->
+        <!-- <module name="TodoComment">
+            <property name="severity" value="warning"/>
+        </module> -->
+    </module>
+
+    <!-- 抑制: 生成代码/测试代码 -->
+    <module name="SuppressionFilter">
+        <property name="file" value="deploy/checkstyle-suppressions.xml"/>
+        <property name="optional" value="true"/>
+    </module>
+</module>

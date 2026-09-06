@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<flow>
+    <!--
+        入库全流程编排
+        流程：ASN校验 → 月台分配 → 收货 → SWITCH(入库类型):
+            - 采购入库 → 质检 → 码盘 → 上架
+            - 退货入库 → 退货质检 → 码盘 → 上架
+            - 调拨入库 → 直接上架（免检）
+            - 越库入库 → 越库处理（直接转出库）
+    -->
+
+    <chain name="inboundExecute">
+        THEN(
+            asnCheck,
+            dockAssign,
+            receive,
+            SWITCH(inboundTypeSwitch).to(qc, returnQc, directPutaway, crossDock),
+            palletize,
+            putaway
+        );
+    </chain>
+
+    <!--
+        说明：
+        1. SWITCH根据入库类型选择分支
+        2. 采购/退货走质检→码盘→上架
+        3. 调拨走directPutaway（免检直接上架）
+        4. 越库走crossDock（不经过存储）
+        5. palletize和putaway在越库场景会被跳过（crossDock后流程结束）
+    -->
+</flow>

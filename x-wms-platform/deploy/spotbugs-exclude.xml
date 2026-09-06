@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- 排除测试代码 -->
+    <Match>
+        <Class name="~.*Test$"/>
+    </Match>
+    <Match>
+        <Class name="~.*Tests$"/>
+    </Match>
+    <!-- 排除配置类 -->
+    <Match>
+        <Class name="~.*Config$"/>
+    </Match>
+    <!-- 排除实体类的getter/setter -->
+    <Match>
+        <Class name="~.*entity.*"/>
+        <Method name="~get.*|set.*"/>
+    </Match>
+    <!-- 排除LiteFlow组件骨架 -->
+    <Match>
+        <Class name="~.*Component$"/>
+    </Match>
+    <!-- 排除DTP/VO -->
+    <Match>
+        <Class name="~.*DTO$|.*VO$|.*Request$|.*Response$"/>
+    </Match>
+    <!-- 豁免 EI_EXPOSE_REP/REP2：Lombok @Data getter 返回可变对象引用（Date/集合），内部 DTO/entity 危害低，业界惯例豁免 -->
+    <Match>
+        <Bug code="EI,EI2"/>
+    </Match>
+    <!-- EncryptTypeHandler：TypeHandler 由 MyBatis 实例化不走 Spring，静态注入是框架约束（ST_WRITE 不可避免） -->
+    <Match>
+        <Class name="~com\.xwms\.common\.crypto\.EncryptTypeHandler"/>
+        <Bug code="ST"/>
+    </Match>
+    <!-- I18nUtil：工具类静态访问模式，改实例方法破坏所有静态调用方，静态注入是惯例 -->
+    <Match>
+        <Class name="~com\.xwms\.common\.i18n\.I18nUtil"/>
+        <Bug code="ST"/>
+    </Match>
+    <!-- IdGenerator：构造器参数校验抛 IllegalArgumentException 是惯例（测试 assertThrows 期望），CT 豁免 -->
+    <Match>
+        <Class name="~com\.xwms\.common\.utils\.IdGenerator"/>
+        <Bug code="CT"/>
+    </Match>
+</FindBugsFilter>

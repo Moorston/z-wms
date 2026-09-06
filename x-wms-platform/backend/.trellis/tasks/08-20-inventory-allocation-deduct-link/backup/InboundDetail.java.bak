@@ -1,0 +1,47 @@
+package com.xwms.core.inbound.entity;
+
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+/**
+ * 入库明细
+ */
+@Data
+@TableName("wms_inbound_detail")
+public class InboundDetail {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    private String detailNo;
+    private String inboundNo;
+    private Integer lineNo;
+    private String skuCode;
+    private String skuName;
+
+    /** 批号 */
+    private String batchNo;
+
+    private BigDecimal expectedQty;
+    private BigDecimal receivedQty;
+    private BigDecimal putawayQty;
+    private String unit;
+    private String packageCode;
+
+    /** 状态: CREATED/RECEIVED/PUTAWAYING/DONE */
+    private String status;
+
+    private String remark;
+
+    @TableField("owner_code_col")
+    private String ownerCodeCol;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createdTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updatedTime;
+}

@@ -1,0 +1,24 @@
+{
+  "name": "x-wms-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "X WMS 三端前端架构 - Web后台 / PDA移动端 / 打包台客户端",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:web": "turbo run dev --filter=@xwms/web-admin",
+    "dev:pda": "turbo run dev --filter=@xwms/pda-mobile",
+    "dev:pack": "turbo run dev --filter=@xwms/pack-station",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}

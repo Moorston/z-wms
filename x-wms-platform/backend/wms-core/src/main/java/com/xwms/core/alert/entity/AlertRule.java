@@ -1,0 +1,60 @@
+package com.xwms.core.alert.entity;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+import com.baomidou.mybatisplus.annotation.*;
+
+import lombok.Data;
+
+/** 预警规则 */
+@Data
+@TableName("wms_alert_rule")
+public class AlertRule {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    private String ruleCode;
+    private String ruleName;
+
+    /** 预警类型: STOCK/EXPIRY/SAFETY/ABNORMAL/THRESHOLD/ACCURACY/TURNOVER */
+    private String alertType;
+
+    private String warehouseCode;
+    private String ownerCode;
+    private String categoryCode;
+    private String skuCode;
+
+    /** 条件类型: LT/GT/EQ/LTE/GTE/BETWEEN */
+    private String conditionType;
+
+    private BigDecimal thresholdValue;
+    private BigDecimal thresholdValue2;
+
+    /** 预警级别: INFO/WARNING/CRITICAL */
+    private String alertLevel;
+
+    /** 检查频率: REALTIME/HOURLY/DAILY */
+    private String checkFrequency;
+
+    private String notifyChannels;
+    private String notifyUsers;
+
+    /** 是否自动处理: Y/N */
+    private String autoHandle;
+
+    private String handleAction;
+    private LocalDate effectiveDate;
+    private LocalDate expireDate;
+    private Integer priority;
+    private String status;
+    private String remark;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createdTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updatedTime;
+}

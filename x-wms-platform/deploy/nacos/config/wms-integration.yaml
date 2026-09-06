@@ -1,0 +1,73 @@
+# ============================================================
+# WMS Integration Service 配置 (wms-integration.yaml)
+# 端口: 8084 | 系统集成：API平台/适配器/快递单/外部系统对接
+# Nacos DataId: wms-integration.yaml, Group: WMS_GROUP
+# ============================================================
+
+server:
+  port: 8084
+
+spring:
+  application:
+    name: wms-integration
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        weight: 1
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        file-extension: yaml
+        shared-configs:
+          - data-id: wms-common.yaml
+            group: WMS_GROUP
+            refresh: true
+
+# API平台配置
+wms:
+  api:
+    # 限流：令牌桶速率
+    rate-limit:
+      default-rate: 100
+      default-capacity: 200
+    # 幂等：TTL（小时）
+    idempotent:
+      ttl-hours: 24
+    # 熔断
+    circuit-breaker:
+      failure-threshold: 5
+      open-duration-seconds: 30
+      half-open-max-requests: 3
+    # 重试
+    retry:
+      max-attempts: 3
+      initial-interval-ms: 1000
+      multiplier: 2.0
+  express:
+    # 快递单批量获取：批量大小
+    batch-size: 100
+    # 批量获取超时（秒）
+    batch-timeout: 30
+    # 死信队列Topic
+    dlq-topic: wms-express-dlq
+
+# 外部系统适配器配置
+integration:
+  adapters:
+    sap-erp:
+      base-url: ${SAP_URL:http://localhost:8000}
+      auth-type: basic
+    tms:
+      base-url: ${TMS_URL:http://localhost:8080}
+    wcs:
+      base-url: ${WCS_URL:http://localhost:8090}
+    taobao:
+      app-key: ${TAOBAO_APP_KEY:}
+      app-secret: ${TAOBAO_APP_SECRET:}
+    sf-express:
+      customer-code: ${SF_CUSTOMER_CODE:}
+      check-word: ${SF_CHECK_WORD:}

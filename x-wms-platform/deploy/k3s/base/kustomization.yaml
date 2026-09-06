@@ -1,0 +1,49 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: xwms
+
+commonLabels:
+  app.kubernetes.io/part-of: x-wms
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - wms-core.yaml
+  - wms-base.yaml
+  - wms-analytics.yaml
+  - wms-integration.yaml
+  - web-admin.yaml
+
+images:
+  - name: wms-core
+    newName: registry.cn-hangzhou.aliyuncs.com/xwms/wms-core
+    newTag: latest
+  - name: wms-base
+    newName: registry.cn-hangzhou.aliyuncs.com/xwms/wms-base
+    newTag: latest
+  - name: wms-analytics
+    newName: registry.cn-hangzhou.aliyuncs.com/xwms/wms-analytics
+    newTag: latest
+  - name: wms-integration
+    newName: registry.cn-hangzhou.aliyuncs.com/xwms/wms-integration
+    newTag: latest
+  - name: wms-web-admin
+    newName: registry.cn-hangzhou.aliyuncs.com/xwms/wms-web-admin
+    newTag: latest
+
+configMapGenerator:
+  - name: wms-env
+    literals:
+      - SPRING_PROFILES_ACTIVE=prod
+      - TZ=Asia/Shanghai
+      - JAVA_OPTS=-XX:+UseG1GC -Xms512m -Xmx1024m
+
+secretGenerator:
+  - name: wms-secrets
+    literals:
+      - DB_PASSWORD=changeme
+      - REDIS_PASSWORD=changeme
+      - NACOS_PASSWORD=changeme
+    type: Opaque

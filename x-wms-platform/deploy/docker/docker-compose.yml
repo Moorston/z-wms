@@ -1,0 +1,114 @@
+# X WMS 本地开发环境 Docker Compose
+# 启动：docker-compose up -d
+# 停止：docker-compose down
+version: "3.9"
+
+services:
+  # Oracle 23ai 免费版
+  oracle:
+    image: container-registry.oracle.com/database/free:23.5.0.0-lite
+    container_name: wms-oracle
+    environment:
+      ORACLE_PWD: wms_password
+      ORACLE_CHARACTERSET: AL32UTF8
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis 8.0
+  redis:
+    image: redis:8.0-alpine
+    container_name: wms-redis
+    command: redis-server --appendonly yes --requirepass ""
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  # Kafka 4.3 KRaft（无ZooKeeper，最新稳定版）
+  kafka:
+    image: apache/kafka:4.3.0
+    container_name: wms-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    ports:
+      - "9092:9092"
+
+  # Nacos 3.1（适配 SCA 2025.1.0.0 的 nacos-client 3.x）
+  nacos:
+    image: nacos/nacos-server:v3.1.1
+    container_name: wms-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      NACOS_CORE_AUTH_ENABLED: "false"
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+
+  # ClickHouse 25.8
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    container_name: wms-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
+  # APISIX 3.12
+  apisix:
+    image: apache/apisix:3.12.0-debian
+    container_name: wms-apisix
+    ports:
+      - "9080:9080"
+      - "9443:9443"
+    depends_on:
+      - etcd
+
+  etcd:
+    image: bitnami/etcd:3.5
+    container_name: wms-etcd
+    environment:
+      ALLOW_NONE_AUTHENTICATION: "yes"
+
+  # PowerJob 分布式任务调度中心
+  # 控制台: http://localhost:7700
+  # 默认账号: powerjob / powerjob
+  powerjob:
+    image: tjqq/powerjob-server:4.3.4
+    container_name: wms-powerjob
+    environment:
+      TZ: Asia/Shanghai
+      JVMOPTIONS: "-Xmx512m -Xms256m"
+    ports:
+      - "7700:7700"   # HTTP端口（控制台/API）
+      - "7701:7701"   # AKKA端口（Worker通信）
+    volumes:
+      - powerjob-data:/powerjob/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  oracle-data:
+  redis-data:
+  clickhouse-data:
+  powerjob-data:

@@ -1,0 +1,151 @@
+package com.xwms.core.operation;
+
+import com.xwms.common.exception.BizException;
+import com.xwms.core.operation.entity.WorkTask;
+import com.xwms.core.operation.mapper.WorkTaskMapper;
+import com.xwms.core.operation.service.WorkTaskService;
+import com.xwms.core.support.BaseTest;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * 作业任务服务单元测试
+ * 核心测试：创建/领取(分布式锁)/完成/异常/待执行列表
+ */
+class WorkTaskServiceTest extends BaseTest {
+
+    @Mock
+    private WorkTaskMapper workTaskMapper;
+    @Mock
+    private RedisTemplate<String, Object> redisTemplate;
+    @Mock
+    private ValueOperations<String, Object> valueOperations;
+
+    @InjectMocks
+    private WorkTaskService workTaskService;
+
+    @Test
+    void testCreate()
+    {
+        when(workTaskMapper.insert(any())).thenReturn(1);
+        WorkTask task = new WorkTask();
+        task.setTaskType("PICK");
+        WorkTask result = workTaskService.create(task);
+
+        assertEquals("PENDING", result.getStatus());
+        assertNotNull(result.getTaskNo());
+        assertTrue(result.getTaskNo().startsWith("TASK"));
+    }
+
+    @Test
+    void testClaim_success()
+    {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.setIfAbsent(anyString(), any(), anyLong(), any(TimeUnit.class)))
+                .thenReturn(true);
+        WorkTask task = new WorkTask();
+        task.setTaskNo("T001");
+        task.setStatus("PENDING");
+        when(workTaskMapper.selectOne(any())).thenReturn(task);
+        when(workTaskMapper.updateById(any())).thenReturn(1);
+        doNothing().when(redisTemplate).delete(anyString());
+        doNothing().when(redisTemplate).convertAndSend(anyString(), any());
+
+        WorkTask result = workTaskService.claim("T001", "user01", "PDA001");
+
+        assertEquals("PROCESSING", result.getStatus());
+        assertEquals("user01", result.getOperator());
+        assertNotNull(result.getActualStartTime());
+    }
+
+    @Test
+    void testClaim_alreadyClaimed()
+    {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.setIfAbsent(anyString(), any(), anyLong(), any(TimeUnit.class)))
+                .thenReturn(false);
+
+        assertThrows(BizException.class,
+                () -> workTaskService.claim("T001", "user01", "PDA001"));
+    }
+
+    @Test
+    void testClaim_invalidStatus()
+    {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.setIfAbsent(anyString(), any(), anyLong(), any(TimeUnit.class)))
+                .thenReturn(true);
+        WorkTask task = new WorkTask();
+        task.setStatus("COMPLETED");
+        when(workTaskMapper.selectOne(any())).thenReturn(task);
+        doNothing().when(redisTemplate).delete(anyString());
+
+        assertThrows(BizException.class,
+                () -> workTaskService.claim("T001", "user01", "PDA001"));
+    }
+
+    @Test
+    void testComplete_success()
+    {
+        WorkTask task = new WorkTask();
+        task.setTaskNo("T001");
+        task.setStatus("PROCESSING");
+        when(workTaskMapper.selectOne(any())).thenReturn(task);
+        when(workTaskMapper.updateById(any())).thenReturn(1);
+
+        workTaskService.complete("T001", new BigDecimal("10"), "user01");
+
+        assertEquals("COMPLETED", task.getStatus());
+        assertEquals(new BigDecimal("10"), task.getActualQty());
+        assertNotNull(task.getCompletedTime());
+    }
+
+    @Test
+    void testComplete_invalidStatus()
+    {
+        WorkTask task = new WorkTask();
+        task.setStatus("PENDING");
+        when(workTaskMapper.selectOne(any())).thenReturn(task);
+
+        assertThrows(BizException.class,
+                () -> workTaskService.complete("T001", BigDecimal.TEN, "user01"));
+    }
+
+    @Test
+    void testReportException()
+    {
+        WorkTask task = new WorkTask();
+        task.setStatus("PROCESSING");
+        when(workTaskMapper.selectOne(any())).thenReturn(task);
+        when(workTaskMapper.updateById(any())).thenReturn(1);
+
+        workTaskService.reportException("T001", "库存差异", "user01");
+
+        assertEquals("EXCEPTION", task.getStatus());
+        assertEquals("库存差异", task.getExceptionReason());
+    }
+
+    @Test
+    void testListPending()
+    {
+        WorkTask t1 = new WorkTask();
+        t1.setPriority(5);
+        WorkTask t2 = new WorkTask();
+        t2.setPriority(9);
+        when(workTaskMapper.selectList(any())).thenReturn(List.of(t1, t2));
+
+        List<WorkTask> result = workTaskService.listPending("WH01", "PICK", 10);
+        assertEquals(2, result.size());
+    }
+}

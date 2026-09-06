@@ -1,0 +1,135 @@
+package com.xwms.core.putaway.event;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+import com.xwms.core.support.BaseTest;
+import java.math.BigDecimal;
+import java.util.concurrent.CompletableFuture;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+
+/** 上架事件发布服务单元测试 核心测试：4类事件发布（任务生成/完成/异常/覆盖）+ 事件构建 */
+class PutawayEventPublisherTest extends BaseTest {
+
+    @Mock private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @InjectMocks private PutawayEventPublisher eventPublisher;
+
+    @BeforeEach
+    void setUp() {
+        when(kafkaTemplate.send(anyString(), anyString(), any()))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+    }
+
+    @Test
+    @DisplayName("发布任务生成事件 - 成功")
+    void testPublishTaskCreated_Success() {
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+        event.setSkuCode("SKU001");
+        event.setPutawayQty(BigDecimal.valueOf(100));
+
+        eventPublisher.publishTaskCreated(event);
+
+        verify(kafkaTemplate, times(1))
+                .send(
+                        eq(PutawayEventPublisher.TOPIC_TASK_CREATED),
+                        eq("TASK001"),
+                        any(PutawayEvent.class));
+    }
+
+    @Test
+    @DisplayName("发布上架完成事件 - 成功")
+    void testPublishTaskCompleted_Success() {
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+        event.setTargetLocation("A-01-01");
+        event.setPutawayQty(BigDecimal.valueOf(50));
+
+        eventPublisher.publishTaskCompleted(event);
+
+        verify(kafkaTemplate, times(1))
+                .send(
+                        eq(PutawayEventPublisher.TOPIC_TASK_COMPLETED),
+                        eq("TASK001"),
+                        any(PutawayEvent.class));
+    }
+
+    @Test
+    @DisplayName("发布上架异常事件 - 成功")
+    void testPublishTaskException_Success() {
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+        event.setExceptionType("NO_LOCATION");
+        event.setReasonCode("E001");
+
+        eventPublisher.publishTaskException(event);
+
+        verify(kafkaTemplate, times(1))
+                .send(
+                        eq(PutawayEventPublisher.TOPIC_TASK_EXCEPTION),
+                        eq("TASK001"),
+                        any(PutawayEvent.class));
+    }
+
+    @Test
+    @DisplayName("发布人工覆盖事件 - 成功")
+    void testPublishTaskOverride_Success() {
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+        event.setSourceLocation("OLD-LOC");
+        event.setTargetLocation("NEW-LOC");
+        event.setReasonCode("LOC_FULL");
+
+        eventPublisher.publishTaskOverride(event);
+
+        verify(kafkaTemplate, times(1))
+                .send(
+                        eq(PutawayEventPublisher.TOPIC_TASK_OVERRIDE),
+                        eq("TASK001"),
+                        any(PutawayEvent.class));
+    }
+
+    @Test
+    @DisplayName("构建事件 - 自动生成事件ID和时间")
+    void testBuildEvent_AutoGenerateIdAndTime() {
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+
+        assertNotNull(event.getEventId());
+        assertNotNull(event.getEventTime());
+        assertEquals("TASK001", event.getTaskNo());
+        assertEquals("WH01", event.getWarehouseCode());
+        assertEquals("user001", event.getOperator());
+        assertEquals("wms-core", event.getSourceService());
+    }
+
+    @Test
+    @DisplayName("发布事件 - Kafka发送异常时不抛出")
+    void testPublishEvent_KafkaException_NoThrow() {
+        when(kafkaTemplate.send(anyString(), anyString(), any()))
+                .thenThrow(new RuntimeException("Kafka broker unavailable"));
+
+        PutawayEvent event = eventPublisher.buildEvent("TASK001", "WH01", "user001");
+
+        assertDoesNotThrow(() -> eventPublisher.publishTaskCreated(event));
+    }
+
+    @Test
+    @DisplayName("发布事件 - 任务号为空时使用事件ID作为Key")
+    void testPublishEvent_NullTaskNo_UseEventIdAsKey() {
+        PutawayEvent event = new PutawayEvent();
+        event.setEventId("evt-001");
+        event.setEventType("TASK_CREATED");
+
+        eventPublisher.publishTaskCreated(event);
+
+        verify(kafkaTemplate, times(1))
+                .send(
+                        eq(PutawayEventPublisher.TOPIC_TASK_CREATED),
+                        eq("evt-001"),
+                        any(PutawayEvent.class));
+    }
+}

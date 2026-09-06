@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<flow>
+    <!--
+        波次执行全流程编排
+        流程：初始化 → 订单分组 → 库存校验 → 路径规划 → (任务生成||任务分配)
+              → 行业分支质检 → 复核 → 打包 → 称重 → 快递单获取 → 发运
+    -->
+
+    <!-- 主流程：波次执行 -->
+    <chain name="waveExecute">
+        THEN(
+            waveInit,
+            orderGroup,
+            inventoryCheck,
+            pathPlan,
+            WHEN(pickTaskGen, taskAssign),
+            SWITCH(industrySwitch).to(gspQc, review),
+            pack,
+            weigh,
+            expressGet,
+            ship
+        );
+    </chain>
+
+    <!-- 行业分支选择器：医药走GSP质检，其他直接复核 -->
+    <chain name="industrySwitch">
+        SWITCH(industrySwitch).to(gspQc, review);
+    </chain>
+
+    <!--
+        说明：
+        1. THEN: 串行执行
+        2. WHEN: 并行执行（pickTaskGen和taskAssign可并行）
+        3. SWITCH: 选择分支（根据行业类型选择GSP质检或直接复核）
+        4. expressGet组件isContinueOnError=true，获取失败不中断流程
+    -->
+</flow>

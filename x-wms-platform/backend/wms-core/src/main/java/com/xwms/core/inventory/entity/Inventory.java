@@ -1,0 +1,63 @@
+package com.xwms.core.inventory.entity;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+import com.baomidou.mybatisplus.annotation.*;
+
+import lombok.Data;
+
+/** 库存台账 唯一键: 仓库+库位+SKU+批号+货主 */
+@Data
+@TableName("wms_inventory")
+public class Inventory {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    private String inventoryNo;
+    private String warehouseCode;
+    private String locationCode;
+    private String skuCode;
+    private String barcode;
+    private String productName;
+    private String batchNo;
+
+    @TableField("owner_code_col")
+    private String ownerCodeCol;
+
+    /** 总数量 */
+    private BigDecimal quantity;
+
+    /** 可用数量 */
+    private BigDecimal availableQty;
+
+    /** 预占数量 */
+    private BigDecimal allocatedQty;
+
+    /** 拣货中数量 */
+    private BigDecimal pickingQty;
+
+    /** 冻结数量 */
+    private BigDecimal frozenQty;
+
+    private String unit;
+
+    /** 状态: NORMAL/FROZEN/EMPTY */
+    private String status;
+
+    /** 生产日期(FIFO排序用) */
+    private LocalDateTime productionDate;
+
+    /** 乐观锁版本号 */
+    @Version private Integer version;
+
+    private LocalDateTime lastInTime;
+    private LocalDateTime lastOutTime;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createdTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updatedTime;
+}

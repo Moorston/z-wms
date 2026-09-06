@@ -1,0 +1,49 @@
+# ============================================================
+# WMS Analytics Service 配置 (wms-analytics.yaml)
+# 端口: 8083 | 分析报表：KPI/报表/ClickHouse OLAP
+# Nacos DataId: wms-analytics.yaml, Group: WMS_GROUP
+# ============================================================
+
+server:
+  port: 8083
+
+spring:
+  application:
+    name: wms-analytics
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        weight: 1
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        file-extension: yaml
+        shared-configs:
+          - data-id: wms-common.yaml
+            group: WMS_GROUP
+            refresh: true
+
+# ClickHouse OLAP
+clickhouse:
+  host: ${CLICKHOUSE_HOST:localhost}
+  port: ${CLICKHOUSE_PORT:8123}
+  database: wms_olap
+  username: default
+  password: ""
+  pool:
+    max-size: 10
+    min-idle: 2
+
+# 分析配置
+wms:
+  analytics:
+    # KPI计算缓存时间（秒）
+    kpi-cache-seconds: 60
+    # 报表数据同步间隔（分钟）
+    sync-interval-minutes: 5
+    # ClickHouse表前缀
+    table-prefix: wms_

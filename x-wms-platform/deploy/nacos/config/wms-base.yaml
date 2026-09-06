@@ -1,0 +1,52 @@
+# ============================================================
+# WMS Base Service 配置 (wms-base.yaml)
+# 端口: 8082 | 基础数据：库位/商品/货主/客户/规则/系统管理
+# Nacos DataId: wms-base.yaml, Group: WMS_GROUP
+# ============================================================
+
+server:
+  port: 8082
+
+spring:
+  application:
+    name: wms-base
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        weight: 1
+        metadata:
+          version: 1.0.0
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: WMS_GROUP
+        file-extension: yaml
+        shared-configs:
+          - data-id: wms-common.yaml
+            group: WMS_GROUP
+            refresh: true
+
+# 基础数据配置
+wms:
+  base:
+    # 库位编码规则：仓库-库区-排-列-层
+    location-code-pattern: "{warehouse}-{area}-{row}-{column}-{level}"
+    # 规则引擎缓存时间（秒）
+    rule-cache-seconds: 300
+  rule:
+    # 上架规则
+    putaway:
+      default-strategy: nearest_empty
+      temperature-match: true
+      batch-separation: true
+    # 分配规则
+    allocation:
+      default-strategy: fefo
+      location-priority: pick_area_first
+    # 周转规则
+    rotation:
+      default-strategy: fefo
+      near-expire-priority: true

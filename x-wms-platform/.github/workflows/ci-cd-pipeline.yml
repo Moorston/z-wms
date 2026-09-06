@@ -1,0 +1,413 @@
+name: X WMS CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'deploy/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+env:
+  REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  REGISTRY_NAMESPACE: xwms
+  JAVA_VERSION: '25'
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # Stage 1: 代码质量检查
+  # ============================================================
+  code-quality:
+    name: 代码质量检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 后端 Checkstyle 检查
+        working-directory: backend
+        run: |
+          mvn -B checkstyle:check -Dcheckstyle.config.location=../deploy/checkstyle.xml \
+            -Dcheckstyle.failOnViolation=true
+
+      - name: 后端 SpotBugs 静态分析
+        working-directory: backend
+        run: |
+          mvn -B spotbugs:check -Dspotbugs.failOnError=true \
+            -Dspotbugs.effort=Max -Dspotbugs.threshold=Medium
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 安装 pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: 前端依赖安装
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 前端 ESLint 检查
+        working-directory: frontend
+        run: pnpm lint
+
+      - name: 前端 TypeScript 类型检查
+        working-directory: frontend
+        run: pnpm typecheck
+
+  # ============================================================
+  # Stage 2: 依赖安全扫描
+  # ============================================================
+  security-scan:
+    name: 依赖安全扫描
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: OWASP 后端依赖漏洞扫描
+        working-directory: backend
+        run: |
+          mvn -B org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=7 \
+            -DsuppressionFile=../deploy/owasp-suppressions.xml \
+            -Dformats=HTML,JSON
+
+      - name: 上传 OWASP 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-report
+          path: backend/**/target/dependency-check-report.*
+
+      - name: 前端依赖漏洞扫描
+        working-directory: frontend
+        run: |
+          npm install -g pnpm@${{ env.PNPM_VERSION }}
+          pnpm install --frozen-lockfile
+          pnpm audit --audit-level=high || true
+
+  # ============================================================
+  # Stage 3: 后端构建与测试
+  # ============================================================
+  backend-build:
+    name: 后端构建与测试
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        module: [wms-common, wms-base, wms-core, wms-analytics, wms-integration]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 构建并测试 ${{ matrix.module }}
+        working-directory: backend
+        run: |
+          mvn -B clean verify -pl ${{ matrix.module }} -am \
+            -Djacoco.skip=false \
+            -Dmaven.test.failure.ignore=false
+
+      - name: 上传覆盖率报告
+        if: matrix.module == 'wms-core'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: backend/wms-core/target/site/jacoco/
+
+      - name: 上传 JAR 制品
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.module }}-jar
+          path: backend/${{ matrix.module }}/target/*.jar
+
+  # ============================================================
+  # Stage 4: 前端构建
+  # ============================================================
+  frontend-build:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        app: [web-admin, pda-mobile, pack-station]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 安装 pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: 安装依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 ${{ matrix.app }}
+        working-directory: frontend
+        run: pnpm --filter @xwms/${{ matrix.app }} build
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-dist
+          path: frontend/apps/${{ matrix.app }}/dist/
+
+  # ============================================================
+  # Stage 5: Docker 镜像构建与推送
+  # ============================================================
+  docker-build:
+    name: 镜像构建与推送
+    runs-on: ubuntu-latest
+    needs: [backend-build, frontend-build]
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        service:
+          - name: wms-core
+            port: 8081
+            context: backend
+          - name: wms-base
+            port: 8082
+            context: backend
+          - name: wms-analytics
+            port: 8083
+            context: backend
+          - name: wms-integration
+            port: 8084
+            context: backend
+          - name: wms-web-admin
+            port: 80
+            context: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载后端 JAR
+        if: matrix.service.context == 'backend'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.service.name }}-jar
+          path: backend/${{ matrix.service.name }}/target/
+
+      - name: 下载前端产物
+        if: matrix.service.context == 'frontend'
+        uses: actions/download-artifact@v4
+        with:
+          name: web-admin-dist
+          path: frontend/apps/web-admin/dist/
+
+      - name: 设置镜像版本号
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF_NAME}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 登录镜像仓库
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service.context }}
+          file: deploy/docker/Dockerfile.${{ matrix.service.name }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.service.name }}:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.service.name }}:latest
+          build-args: |
+            JAR_FILE=${{ matrix.service.name }}.jar
+            PORT=${{ matrix.service.port }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.service.name }}:latest
+          cache-to: type=inline
+
+      - name: Trivy 镜像漏洞扫描
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.service.name }}:${{ steps.version.outputs.tag }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+  # ============================================================
+  # Stage 6: 部署到 Dev
+  # ============================================================
+  deploy-dev:
+    name: 部署到 Dev 环境
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置镜像版本
+        id: version
+        run: echo "tag=develop-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: SSH 部署到 Dev 服务器
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SERVER_USER }}
+          key: ${{ secrets.DEV_SERVER_SSH_KEY }}
+          script: |
+            cd /opt/xwms
+            export IMAGE_TAG=${{ steps.version.outputs.tag }}
+            docker-compose -f deploy/docker/docker-compose.yml pull
+            docker-compose -f deploy/docker/docker-compose.yml up -d
+            docker image prune -f
+
+      - name: Dev 环境健康检查
+        run: |
+          for i in {1..30}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.DEV_SERVER_HOST }}:8081/actuator/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Dev 环境健康检查通过"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Dev 环境健康检查失败"
+          exit 1
+
+  # ============================================================
+  # Stage 7: 部署到 Staging (蓝绿)
+  # ============================================================
+  deploy-staging:
+    name: 部署到 Staging 环境
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.STAGING_KUBE_CONFIG }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: 设置镜像版本
+        id: version
+        run: echo "tag=main-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Kustomize 构建蓝绿部署
+        run: |
+          cd deploy/k3s
+          kustomize edit set image \
+            wms-core=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-core:${{ steps.version.outputs.tag }} \
+            wms-base=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-base:${{ steps.version.outputs.tag }} \
+            wms-analytics=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-analytics:${{ steps.version.outputs.tag }} \
+            wms-integration=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-integration:${{ steps.version.outputs.tag }}
+
+      - name: 部署 Green 环境
+        run: |
+          kubectl apply -k deploy/k3s/overlays/staging-green
+          kubectl rollout status deployment/wms-core-green -n xwms --timeout=300s
+          kubectl rollout status deployment/wms-base-green -n xwms --timeout=300s
+
+      - name: Green 环境健康检查
+        run: |
+          kubectl wait --for=condition=ready pod -l app=wms-core,tier=green -n xwms --timeout=120s
+
+      - name: 切换流量到 Green
+        run: |
+          kubectl patch service wms-core -n xwms -p '{"spec":{"selector":{"tier":"green"}}}'
+          kubectl patch service wms-base -n xwms -p '{"spec":{"selector":{"tier":"green"}}}'
+
+      - name: Staging 冒烟测试
+        run: |
+          bash deploy/scripts/smoke-test.sh ${{ secrets.STAGING_API_URL }}
+
+  # ============================================================
+  # Stage 8: 部署到 Prod (金丝雀)
+  # ============================================================
+  deploy-prod:
+    name: 部署到 Prod 环境
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'release'
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PROD_KUBE_CONFIG }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: 金丝雀部署 10% 流量
+        run: |
+          cd deploy/k3s/overlays/prod
+          kustomize edit set image wms-core=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-core:${{ github.event.release.tag_name }}
+          kubectl apply -k .
+          kubectl patch deployment wms-core-canary -n xwms -p '{"spec":{"replicas":1}}'
+
+      - name: 金丝雀监控 (5分钟)
+        run: |
+          bash deploy/scripts/canary-monitor.sh 300
+          # 监控错误率，超过1%自动回滚
+
+      - name: 扩大到 50%
+        run: |
+          kubectl patch deployment wms-core-canary -n xwms -p '{"spec":{"replicas":5}}'
+          sleep 60
+
+      - name: 全量发布
+        run: |
+          kubectl patch deployment wms-core -n xwms -p '{"spec":{"template":{"spec":{"containers":[{"name":"wms-core","image":"${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/wms-core:${{ github.event.release.tag_name }}"}]}}}}'
+          kubectl rollout status deployment/wms-core -n xwms --timeout=300s
+          kubectl patch deployment wms-core-canary -n xwms -p '{"spec":{"replicas":0}}'
+
+      - name: Prod 冒烟测试
+        run: |
+          bash deploy/scripts/smoke-test.sh ${{ secrets.PROD_API_URL }}
+
+      - name: 发送发布通知
+        if: always()
+        run: |
+          bash deploy/scripts/notify.sh "X WMS ${{ github.event.release.tag_name }} 发布${{ job.status }}"

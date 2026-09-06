@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 920" font-family="sans-serif" font-size="11">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title{font-size:14px;font-weight:bold;fill:#1e293b}
+      .layer-title{font-size:11px;font-weight:bold;fill:#475569}
+      .node{rx:6;ry:6;stroke-width:1}
+      .node-text{font-size:10px;fill:#1e293b;text-anchor:middle}
+      .node-sub{font-size:9px;fill:#64748b;text-anchor:middle}
+      .layer-box{fill:none;stroke:#cbd5e1;stroke-width:1;stroke-dasharray:4,3;rx:8}
+      .layer-label{font-size:10px;font-weight:bold;fill:#64748b}
+      .arrow{stroke:#94a3b8;stroke-width:1;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+
+  <text x="340" y="24" class="title" text-anchor="middle">X WMS 平台技术架构 V8.1</text>
+  <text x="340" y="40" class="node-sub" text-anchor="middle">Java 25 LTS · Spring Boot 3.5 · K3s 1.32 · Oracle 23ai · Kafka 4.0 KRaft · Redis 8.0</text>
+
+  <!-- L6 接入层 -->
+  <rect x="20" y="56" width="640" height="72" class="layer-box"/>
+  <text x="30" y="72" class="layer-label">L6 接入层</text>
+  <rect x="60" y="80" width="120" height="36" class="node" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="120" y="96" class="node-text">APISIX 3.12 网关</text>
+  <text x="120" y="108" class="node-sub">鉴权·限流·路由·灰度</text>
+  <rect x="210" y="80" width="100" height="36" class="node" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="260" y="96" class="node-text">PDA / RF 终端</text>
+  <text x="260" y="108" class="node-sub">拣货·收货·盘点</text>
+  <rect x="330" y="80" width="100" height="36" class="node" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="380" y="96" class="node-text">Web 管理端</text>
+  <text x="380" y="108" class="node-sub">运营·配置·报表</text>
+  <rect x="450" y="80" width="180" height="36" class="node" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="540" y="96" class="node-text">开放 API / 第三方系统</text>
+  <text x="540" y="108" class="node-sub">ERP·TMS·电商·快递</text>
+
+  <!-- L5 应用层 -->
+  <rect x="20" y="144" width="640" height="100" class="layer-box"/>
+  <text x="30" y="160" class="layer-label">L5 应用层（4 微服务）</text>
+  <rect x="50" y="170" width="140" height="60" class="node" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="120" y="190" class="node-text" font-weight="bold">core-service :8081</text>
+  <text x="120" y="204" class="node-sub">入库·出库·库存·作业</text>
+  <text x="120" y="216" class="node-sub">批次·质检·越库调拨</text>
+  <rect x="210" y="170" width="140" height="60" class="node" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="280" y="190" class="node-text" font-weight="bold">base-service :8082</text>
+  <text x="280" y="204" class="node-sub">库位·规则·基础数据</text>
+  <text x="280" y="216" class="node-sub">月台费收·系统管理</text>
+  <rect x="370" y="170" width="140" height="60" class="node" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="440" y="190" class="node-text" font-weight="bold">analytics :8083</text>
+  <text x="440" y="204" class="node-sub">KPI 报表·经营分析</text>
+  <text x="440" y="216" class="node-sub">实时看板·数据归档</text>
+  <rect x="530" y="170" width="110" height="60" class="node" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="585" y="190" class="node-text" font-weight="bold">integration</text>
+  <text x="585" y="204" class="node-sub">:8084 适配器</text>
+  <text x="585" y="216" class="node-sub">ERP·TMS·WCS·快递</text>
+
+  <!-- L4 中间件层 -->
+  <rect x="20" y="260" width="640" height="80" class="layer-box"/>
+  <text x="30" y="276" class="layer-label">L4 中间件层</text>
+  <rect x="40" y="286" width="110" height="44" class="node" fill="#f3e8ff" stroke="#a855f7"/>
+  <text x="95" y="304" class="node-text">Nacos 2.4</text>
+  <text x="95" y="318" class="node-sub">注册·配置中心</text>
+  <rect x="165" y="286" width="110" height="44" class="node" fill="#fce7f3" stroke="#ec4899"/>
+  <text x="220" y="304" class="node-text">Kafka 4.0 KRaft</text>
+  <text x="220" y="318" class="node-sub">事件总线·削峰(无ZK)</text>
+  <rect x="290" y="286" width="110" height="44" class="node" fill="#fce7f3" stroke="#ec4899"/>
+  <text x="345" y="304" class="node-text">Redis 8.0</text>
+  <text x="345" y="318" class="node-sub">缓存·预占·Search·Stream</text>
+  <rect x="415" y="286" width="110" height="44" class="node" fill="#f3e8ff" stroke="#a855f7"/>
+  <text x="470" y="304" class="node-text">Elasticsearch</text>
+  <text x="470" y="318" class="node-sub">全文检索·日志</text>
+  <rect x="540" y="286" width="100" height="44" class="node" fill="#f3e8ff" stroke="#a855f7"/>
+  <text x="590" y="304" class="node-text">MinIO</text>
+  <text x="590" y="318" class="node-sub">对象存储·文件</text>
+
+  <!-- L3 数据层 -->
+  <rect x="20" y="356" width="640" height="80" class="layer-box"/>
+  <text x="30" y="372" class="layer-label">L3 数据层</text>
+  <rect x="40" y="382" width="120" height="44" class="node" fill="#ffedd5" stroke="#f97316"/>
+  <text x="100" y="400" class="node-text" font-weight="bold">Oracle 23ai</text>
+  <text x="100" y="414" class="node-sub">OLTP·向量·JSON二元性</text>
+  <rect x="175" y="382" width="120" height="44" class="node" fill="#ffedd5" stroke="#f97316"/>
+  <text x="235" y="400" class="node-text" font-weight="bold">ClickHouse 25.8</text>
+  <text x="235" y="414" class="node-sub">OLAP·KPI·流水</text>
+  <rect x="310" y="382" width="100" height="44" class="node" fill="#ffedd5" stroke="#f97316"/>
+  <text x="360" y="400" class="node-text">PostgreSQL</text>
+  <text x="360" y="414" class="node-sub">知识库元数据</text>
+  <rect x="425" y="382" width="100" height="44" class="node" fill="#ffedd5" stroke="#f97316"/>
+  <text x="475" y="400" class="node-text">Milvus</text>
+  <text x="475" y="414" class="node-sub">向量数据库(AI)</text>
+  <rect x="540" y="382" width="100" height="44" class="node" fill="#ffedd5" stroke="#f97316"/>
+  <text x="590" y="400" class="node-text">Neo4j</text>
+  <text x="590" y="414" class="node-sub">知识图谱(AI)</text>
+
+  <!-- L2 AI层 -->
+  <rect x="20" y="452" width="640" height="72" class="layer-box"/>
+  <text x="30" y="468" class="layer-label">L2 AI 平台层（独立部署 · Python 3.13 + FastAPI）</text>
+  <rect x="40" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="80" y="494" class="node-text">单据 OCR</text>
+  <text x="80" y="506" class="node-sub">PaddleOCR</text>
+  <rect x="130" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="170" y="494" class="node-text">需求预测</text>
+  <text x="170" y="506" class="node-sub">Prophet</text>
+  <rect x="220" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="260" y="494" class="node-text">RAG 问答</text>
+  <text x="260" y="506" class="node-sub">bge+Milvus</text>
+  <rect x="310" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="350" y="494" class="node-text">AIOps</text>
+  <text x="350" y="506" class="node-sub">异常检测</text>
+  <rect x="400" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="440" y="494" class="node-text">语音拣货</text>
+  <text x="440" y="506" class="node-sub">ASR+TTS</text>
+  <rect x="490" y="478" width="80" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="530" y="494" class="node-text">无人机盘点</text>
+  <text x="530" y="506" class="node-sub">CV识别</text>
+  <rect x="580" y="478" width="60" height="36" class="node" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="610" y="494" class="node-text">视频分析</text>
+  <text x="610" y="506" class="node-sub">YOLO</text>
+
+  <!-- L1 基础设施层 -->
+  <rect x="20" y="540" width="640" height="72" class="layer-box"/>
+  <text x="30" y="556" class="layer-label">L1 基础设施层</text>
+  <rect x="40" y="566" width="120" height="36" class="node" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="100" y="582" class="node-text">K3s 1.32</text>
+  <text x="100" y="594" class="node-sub">轻量容器编排</text>
+  <rect x="175" y="566" width="120" height="36" class="node" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="235" y="582" class="node-text">Prometheus 3.0</text>
+  <text x="235" y="594" class="node-sub">指标·Grafana 12</text>
+  <rect x="310" y="566" width="120" height="36" class="node" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="370" y="582" class="node-text">SkyWalking 10</text>
+  <text x="370" y="594" class="node-sub">链路追踪</text>
+  <rect x="445" y="566" width="100" height="36" class="node" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="495" y="582" class="node-text">Loki 3</text>
+  <text x="495" y="594" class="node-sub">日志聚合</text>
+  <rect x="560" y="566" width="80" height="36" class="node" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="600" y="582" class="node-text">GitOps</text>
+  <text x="600" y="594" class="node-sub">ArgoCD</text>
+
+  <!-- 箭头：接入层→应用层 -->
+  <line x1="120" y1="116" x2="120" y2="168" class="arrow"/>
+  <line x1="260" y1="116" x2="280" y2="168" class="arrow"/>
+  <line x1="380" y1="116" x2="440" y2="168" class="arrow"/>
+  <line x1="540" y1="116" x2="585" y2="168" class="arrow"/>
+
+  <!-- 箭头：应用层→中间件 -->
+  <line x1="120" y1="230" x2="95" y2="284" class="arrow"/>
+  <line x1="280" y1="230" x2="220" y2="284" class="arrow"/>
+  <line x1="440" y1="230" x2="345" y2="284" class="arrow"/>
+  <line x1="585" y1="230" x2="470" y2="284" class="arrow"/>
+
+  <!-- 箭头：中间件→数据层 -->
+  <line x1="220" y1="330" x2="100" y2="380" class="arrow"/>
+  <line x1="345" y1="330" x2="235" y2="380" class="arrow"/>
+  <line x1="470" y1="330" x2="360" y2="380" class="arrow"/>
+
+  <!-- 箭头：应用层→AI层（事件） -->
+  <line x1="585" y1="230" x2="585" y2="476" class="arrow" stroke-dasharray="3,3"/>
+  <text x="595" y="350" class="node-sub" fill="#0ea5e9">Kafka事件</text>
+
+  <!-- 关键决策标注 -->
+  <rect x="20" y="630" width="640" height="100" class="layer-box" stroke="#22c55e"/>
+  <text x="30" y="648" class="layer-label" fill="#16a34a">关键架构决策（经 9 家主流厂商验证 · 综合评分 9.2/10）</text>
+  <text x="40" y="668" class="node-sub" text-anchor="start">① 库存扣减：Oracle 原子 SQL + 乐观锁，强一致，实际并发 &lt;100 QPS 完全够用</text>
+  <text x="40" y="684" class="node-sub" text-anchor="start">② 4 微服务：core/base/analytics/integration，DDD 限界上下文，不过度拆分</text>
+  <text x="40" y="700" class="node-sub" text-anchor="start">③ 不分库分表：分区表+归档+OLAP 分离，WMS 数据量可控，复杂度低</text>
+  <text x="40" y="716" class="node-sub" text-anchor="start">④ 消息队列：Kafka 4.0 KRaft(核心事件流) + Redis Stream/PubSub(轻量任务)，各取所长</text>
+
+  <!-- 成本与指标 -->
+  <rect x="20" y="746" width="310" height="80" class="layer-box" stroke="#3b82f6"/>
+  <text x="30" y="764" class="layer-label" fill="#2563eb">成本指标</text>
+  <text x="40" y="784" class="node-sub" text-anchor="start">硬件成本：约 ¥15 万/年（云）/ ¥8 万/年（自建）</text>
+  <text x="40" y="800" class="node-sub" text-anchor="start">团队规模：3-5 人后端 + 1 前端 + 1 运维</text>
+  <text x="40" y="816" class="node-sub" text-anchor="start">License：全开源零成本（Oracle 用户已有）</text>
+
+  <rect x="350" y="746" width="310" height="80" class="layer-box" stroke="#f59e0b"/>
+  <text x="360" y="764" class="layer-label" fill="#d97706">性能与高可用</text>
+  <text x="370" y="784" class="node-sub" text-anchor="start">高并发：上游 2000 QPS / 作业 100 并发</text>
+  <text x="370" y="800" class="node-sub" text-anchor="start">高可用：核心 SLA 99.9%，RTO &lt;30s，RPO=0</text>
+  <text x="370" y="816" class="node-sub" text-anchor="start">库存扣减：&lt;50ms，Oracle 单行 500-2000 QPS</text>
+
+  <!-- 底部 -->
+  <text x="340" y="850" class="node-sub" text-anchor="middle">X WMS Platform · 技术架构 V8.1 · 2026-08</text>
+  <text x="340" y="866" class="node-sub" text-anchor="middle" fill="#94a3b8">核心标准化 · 行业插件化 · 运营智能化</text>
+</svg>

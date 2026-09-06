@@ -1,0 +1,217 @@
+package com.xwms.core.outbound.service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
+import com.xwms.common.exception.BizException;
+import com.xwms.common.exception.ErrorCode;
+import com.xwms.common.resilience.FallbackHandler;
+import com.xwms.common.statemachine.engine.StateMachineEngine;
+import com.xwms.core.inventory.service.InventoryService;
+import com.xwms.core.outbound.entity.OutboundOrder;
+import com.xwms.core.outbound.mapper.OutboundOrderMapper;
+import com.xwms.core.statemachine.service.StateTransitionLogService;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+/** 出库单服务 核心流程：创建 -> 分配(预占) -> 波次 -> 拣货 -> 复核 -> 打包 -> 发运 状态管理：通过StateMachineEngine统一管控状态流转 */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class OutboundOrderService {
+
+    private static final String MACHINE_NAME = "outboundOrder";
+
+    private final OutboundOrderMapper outboundOrderMapper;
+    private final InventoryService inventoryService;
+    private final StateMachineEngine stateMachineEngine;
+    private final StateTransitionLogService transitionLogService;
+
+    /** 创建出库单 限流降级：Sentinel 资源 outboundService（Dashboard 动态推送限流/熔断规则） */
+    @SentinelResource(value = "outboundService", fallback = "createFallback")
+    @Transactional(rollbackFor = Exception.class)
+    public OutboundOrder create(OutboundOrder order) {
+        OutboundOrder exist =
+                outboundOrderMapper.selectOne(
+                        new LambdaQueryWrapper<OutboundOrder>()
+                                .eq(OutboundOrder::getOutboundNo, order.getOutboundNo()));
+        if (exist != null) {
+            throw new BizException(ErrorCode.ORDER_ALREADY_EXISTS);
+        }
+        order.setStatus("CREATED");
+        outboundOrderMapper.insert(order);
+        log.info("出库单创建: orderNo={}, type={}", order.getOutboundNo(), order.getOutboundType());
+        return order;
+    }
+
+    /** 创建出库单降级方法 */
+    public OutboundOrder createFallback(OutboundOrder order, BlockException e) {
+        log.error("[出库单创建降级] orderNo={}, error={}", order.getOutboundNo(), e.getMessage());
+        FallbackHandler.simple("出库单创建", e);
+        return null;
+    }
+
+    /**
+     * 库存分配（预占） 状态流转：CREATED --ALLOCATE--> ALLOCATED 1. 状态机校验当前状态 2. 按分配规则选择库位+批次 3. Redis预占 +
+     * Oracle allocated_qty增加
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void allocate(
+            String orderNo,
+            String sku,
+            String warehouse,
+            String location,
+            String batchNo,
+            BigDecimal qty) {
+        OutboundOrder order = getByOrderNo(orderNo);
+        // 状态机校验并触发流转
+        Map<String, Object> context = new HashMap<>();
+        context.put("bizId", orderNo);
+        context.put("sku", sku);
+        context.put("qty", qty);
+        String newState =
+                stateMachineEngine.fire(MACHINE_NAME, order.getStatus(), "ALLOCATE", context);
+
+        // 预占库存：available_qty -= qty，allocated_qty += qty（调用方传入库位批次）
+        inventoryService.allocateInventory(
+                warehouse,
+                location,
+                sku,
+                batchNo,
+                order.getOwnerCodeCol(),
+                qty,
+                "OUTBOUND",
+                orderNo,
+                "system");
+        order.setAllocatedQty(qty);
+        order.setStatus(newState);
+        outboundOrderMapper.updateById(order);
+
+        // 记录状态流转日志
+        transitionLogService.record(
+                MACHINE_NAME, orderNo, order.getStatus(), newState, "ALLOCATE", "system", context);
+        log.info("出库单分配完成: orderNo={}, sku={}, qty={}", orderNo, sku, qty);
+    }
+
+    /** 确认拣货完成 */
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmPick(String orderNo, BigDecimal pickedQty) {
+        OutboundOrder order = getByOrderNo(orderNo);
+        order.setPickedQty(pickedQty);
+        order.setStatus("PICKED");
+        outboundOrderMapper.updateById(order);
+    }
+
+    /** 发运确认（扣减库存） 状态流转：PACKED --SHIP--> SHIPPED */
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmShip(
+            String orderNo,
+            String sku,
+            String warehouse,
+            String location,
+            String batchNo,
+            BigDecimal qty) {
+        OutboundOrder order = getByOrderNo(orderNo);
+        // 状态机校验
+        Map<String, Object> context = new HashMap<>();
+        context.put("bizId", orderNo);
+        context.put("sku", sku);
+        context.put("qty", qty);
+        String newState = stateMachineEngine.fire(MACHINE_NAME, order.getStatus(), "SHIP", context);
+
+        // Oracle核销预占扣减（总量减+预占核销，可用不动——预占时已减过可用）
+        try {
+            inventoryService.deductAllocatedInventory(
+                    warehouse,
+                    location,
+                    sku,
+                    batchNo,
+                    order.getOwnerCodeCol(),
+                    qty,
+                    "OUTBOUND",
+                    orderNo,
+                    "system");
+        } catch (RuntimeException e) {
+            log.warn(
+                    "出库单发运扣减库存失败: orderNo={}, sku={}, qty={}, err={}",
+                    orderNo,
+                    sku,
+                    qty,
+                    e.getMessage());
+            throw new BizException(ErrorCode.INVENTORY_DEDUCT_FAILED);
+        }
+        order.setShippedQty(qty);
+        order.setActualShipTime(LocalDateTime.now());
+        order.setStatus(newState);
+        outboundOrderMapper.updateById(order);
+
+        transitionLogService.record(
+                MACHINE_NAME, orderNo, order.getStatus(), newState, "SHIP", "system", context);
+        log.info("出库单发运完成: orderNo={}, qty={}", orderNo, qty);
+    }
+
+    /**
+     * 取消出库单（释放预占库存） 状态流转：任意非终态 --CANCEL--> CANCELLED 库位/批次参数由调用方传入（与 allocate/confirmShip 同契约，order
+     * 不持久化）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void cancel(
+            String orderNo,
+            String sku,
+            String warehouse,
+            String location,
+            String batchNo,
+            BigDecimal qty) {
+        OutboundOrder order = getByOrderNo(orderNo);
+        if ("SHIPPED".equals(order.getStatus())) {
+            throw new BizException("已发运的出库单不能取消");
+        }
+        // 状态机校验
+        Map<String, Object> context = new HashMap<>();
+        context.put("bizId", orderNo);
+        String newState =
+                stateMachineEngine.fire(MACHINE_NAME, order.getStatus(), "CANCEL", context);
+
+        // 释放预占：allocated_qty -= qty，available_qty += qty（仅当存在预占时）
+        BigDecimal allocated = order.getAllocatedQty();
+        if (allocated != null && allocated.compareTo(BigDecimal.ZERO) > 0) {
+            inventoryService.releaseAllocation(
+                    warehouse,
+                    location,
+                    sku,
+                    batchNo,
+                    order.getOwnerCodeCol(),
+                    allocated,
+                    "OUTBOUND_CANCEL",
+                    orderNo,
+                    "system");
+        }
+        order.setStatus(newState);
+        outboundOrderMapper.updateById(order);
+
+        transitionLogService.record(
+                MACHINE_NAME, orderNo, order.getStatus(), newState, "CANCEL", "system", context);
+        log.info("出库单取消: orderNo={}, releasedQty={}", orderNo, allocated);
+    }
+
+    public OutboundOrder getByOrderNo(String orderNo) {
+        OutboundOrder order =
+                outboundOrderMapper.selectOne(
+                        new LambdaQueryWrapper<OutboundOrder>()
+                                .eq(OutboundOrder::getOutboundNo, orderNo));
+        if (order == null) {
+            throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        return order;
+    }
+}

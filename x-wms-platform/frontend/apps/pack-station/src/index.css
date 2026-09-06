@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #2563eb;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: #f1f5f9;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* 打包台大字显示 */
+.weight-display {
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 扫码输入框 */
+.scan-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}

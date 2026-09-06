@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wms-base
+  labels:
+    app: wms-base
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wms-base
+  template:
+    metadata:
+      labels:
+        app: wms-base
+    spec:
+      containers:
+        - name: wms-base
+          image: wms-base:latest
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: wms-env
+            - secretRef:
+                name: wms-secrets
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wms-base
+spec:
+  selector:
+    app: wms-base
+  ports:
+    - port: 8082
+      targetPort: 8082
+  type: ClusterIP

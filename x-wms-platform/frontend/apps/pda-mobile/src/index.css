@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #2563eb;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* PDA全局样式 - 大字体、大按钮、触摸友好 */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 输入框允许选择 */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 安全区域适配 */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 滚动条隐藏 */
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* 大按钮基础样式 */
+.pda-btn {
+  min-height: 48px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* 扫码输入框聚焦样式 */
+.scan-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}

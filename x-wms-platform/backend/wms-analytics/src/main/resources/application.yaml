@@ -1,0 +1,101 @@
+﻿server:
+  port: 8083
+  servlet:
+    context-path: /api
+spring:
+  application:
+    name: wms-analytics
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: wms
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+        port: ${SENTINEL_PORT:8719}
+      eager: true
+  datasource:
+    # MySQL 主数据源（billing/costing 计费表）
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:wms_analytics}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PWD:root}
+    druid:
+      initial-size: 3
+      max-active: 20
+      min-idle: 3
+    clickhouse:
+      driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+      url: jdbc:clickhouse://${CK_HOST:localhost}:${CK_PORT:8123}/wms
+      username: ${CK_USER:default}
+      password: ${CK_PWD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: 2
+  kafka:
+    bootstrap-servers: ${KAFKA_ADDR:localhost:9092}
+    consumer:
+      group-id: wms-analytics-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+spring.threads.virtual.enabled: true
+
+# MyBatis-Plus 配置（billing/costing 迁入后需要 MySQL mapper 扫描）
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# SpringDoc OpenAPI 配置
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    tags-sorter: alpha
+    operations-sorter: alpha
+  group-configs:
+    - group: "计费管理"
+      paths-to-match: /billing/**
+      packages-to-scan: com.xwms.analytics.billing
+    - group: "成本核算"
+      paths-to-match: /costing/**
+      packages-to-scan: com.xwms.analytics.costing
+    - group: "KPI报表"
+      paths-to-match: /kpi/**
+      packages-to-scan: com.xwms.analytics.kpi
+    - group: "数据分析"
+      paths-to-match: /report/**, /olap/**
+      packages-to-scan: com.xwms.analytics.report,com.xwms.analytics.olap
+    - group: "全部接口"
+      paths-to-match: /**
+      packages-to-scan: com.xwms.analytics
+
+# PowerJob 分布式任务调度 Worker
+powerjob:
+  worker:
+    enabled: true
+    app-name: wms-analytics
+    server-address: ${POWERJOB_SERVER:127.0.0.1:7700}
+    protocol: AKKA
+    port: 27779
+    result-store-max-length: 4096
+    max-result-length: 4096
+
+# 敏感信息加密配置
+wms:
+  crypto:
+    enabled: true
+    secret-key: x-wms-platform-aes-256-key-2026!!

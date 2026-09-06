@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+    <!-- 测试代码放宽检查 -->
+    <suppress checks="LineLength" files=".*Test\.java$"/>
+    <suppress checks="MagicNumber" files=".*Test\.java$"/>
+    <suppress checks=".*" files=".*TestBase\.java$"/>
+    <!-- AvoidStarImport 全局豁免：自家业务包 star import 危害低（IDE 可管理），checkstyle excludes 不支持前缀匹配，保留 UnusedImports/RedundantImport 抓真正 import 问题 -->
+    <suppress checks="AvoidStarImport" files=".*\.java"/>
+    <suppress checks="MethodName" files=".*Test\.java$"/>
+    <suppress checks="AnnotationOnSameLine" files=".*Test\.java$"/>
+    <suppress checks="LeftCurly" files=".*Test\.java$"/>
+    <suppress checks="NeedBraces" files=".*Test\.java$"/>
+    <suppress checks="WhitespaceAround" files=".*Test\.java$"/>
+    <suppress checks="TodoComment" files=".*Test\.java$"/>
+    <suppress checks="AvoidStarImport" files=".*Test\.java$"/>
+    <suppress checks="ImportOrder" files=".*Test\.java$"/>
+    <suppress checks="UnusedImports" files=".*Test\.java$"/>
+    <!-- 生成的代码 -->
+    <suppress checks=".*" files=".*generated.*"/>
+    <!-- LiteFlow组件骨架 -->
+    <suppress checks="LineLength" files=".*liteflow.*Component\.java$"/>
+    <!-- Mapper 接口的 @Select/@Insert SQL 注解常超长，不宜断行 -->
+    <suppress checks="LineLength" files=".*Mapper\.java$"/>
+    <!-- 配置类 -->
+    <suppress checks="MagicNumber" files=".*Config\.java$"/>
+</suppressions>

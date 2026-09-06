@@ -1,0 +1,424 @@
+package com.xwms.core.consumable.service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
+import com.xwms.core.config.service.SysConfigService;
+import com.xwms.core.consumable.entity.*;
+import com.xwms.core.consumable.mapper.*;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+/** 耗材管理服务 核心能力: 耗材SKU维护/产品包装关联/入库耗材扣减/出库耗材扣减/库存预警 业务场景: 产品入库时需要再包装，包装过程中消耗包装盒、填充物等包装耗材 */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ConsumableService {
+
+    private final ConsumableMapper consumableMapper;
+    private final ProductPackagingMapper productPackagingMapper;
+    private final ConsumableRecordMapper consumableRecordMapper;
+    private final SysConfigService sysConfigService;
+
+    private static final AtomicInteger SEQ = new AtomicInteger(0);
+    private static final DateTimeFormatter NO_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    // ============================================================
+
+    // 1. 耗材SKU维护
+    // ============================================================
+
+    /** 创建耗材 */
+    @Transactional(rollbackFor = Exception.class)
+    public Consumable createConsumable(Consumable consumable, String creator) {
+        log.info(
+                "创建耗材: code={}, name={}, type={}",
+                consumable.getConsumableCode(),
+                consumable.getConsumableName(),
+                consumable.getConsumableType());
+
+        if (consumable.getConsumableCode() == null) {
+            consumable.setConsumableCode(generateConsumableCode());
+        }
+        consumable.setStatus("ENABLED");
+        consumable.setCurrentStock(
+                consumable.getCurrentStock() != null
+                        ? consumable.getCurrentStock()
+                        : BigDecimal.ZERO);
+        consumable.setCreatedBy(creator);
+        consumable.setCreatedTime(LocalDateTime.now());
+        consumableMapper.insert(consumable);
+
+        log.info("耗材创建完成: code={}", consumable.getConsumableCode());
+        return consumable;
+    }
+
+    /** 更新耗材 */
+    @Transactional(rollbackFor = Exception.class)
+    public Consumable updateConsumable(Consumable consumable, String updater) {
+        consumable.setUpdatedBy(updater);
+        consumable.setUpdatedTime(LocalDateTime.now());
+        consumableMapper.updateById(consumable);
+        return consumable;
+    }
+
+    /** 耗材入库（采购入库/盘点调整） */
+    @Transactional(rollbackFor = Exception.class)
+    public Consumable stockIn(
+            String consumableCode, BigDecimal qty, String refNo, String operator) {
+        log.info("耗材入库: code={}, qty={}", consumableCode, qty);
+
+        Consumable consumable = consumableMapper.selectByCode(consumableCode);
+        if (consumable == null) {
+            throw new RuntimeException("耗材不存在: " + consumableCode);
+        }
+
+        BigDecimal beforeStock = consumable.getCurrentStock();
+        consumable.setCurrentStock(beforeStock.add(qty));
+        consumable.setUpdatedTime(LocalDateTime.now());
+        consumableMapper.updateById(consumable);
+
+        // 记录耗材变动
+        createRecord(
+                consumable,
+                "ADJUST",
+                refNo,
+                null,
+                qty,
+                beforeStock,
+                consumable.getCurrentStock(),
+                operator);
+
+        log.info(
+                "耗材入库完成: code={}, 库存: {} -> {}",
+                consumableCode,
+                beforeStock,
+                consumable.getCurrentStock());
+        return consumable;
+    }
+
+    // ============================================================
+
+    // 2. 产品包装关联维护
+    // ============================================================
+
+    /** 创建产品包装关联 */
+    @Transactional(rollbackFor = Exception.class)
+    public ProductPackaging createProductPackaging(ProductPackaging packaging, String creator) {
+        log.info(
+                "创建产品包装关联: sku={}, 耗材={}, 用量={}",
+                packaging.getSkuCode(),
+                packaging.getConsumableCode(),
+                packaging.getUsagePerUnit());
+
+        if (packaging.getPackagingCode() == null) {
+            packaging.setPackagingCode(generatePackagingCode());
+        }
+        packaging.setEnabled("Y");
+        packaging.setCreatedBy(creator);
+        packaging.setCreatedTime(LocalDateTime.now());
+        productPackagingMapper.insert(packaging);
+
+        log.info("产品包装关联创建完成: code={}", packaging.getPackagingCode());
+        return packaging;
+    }
+
+    /** 根据商品查询包装关联（含耗材信息） */
+    public List<ProductPackaging> getProductPackagings(String skuCode) {
+        return productPackagingMapper.selectBySku(skuCode);
+    }
+
+    // ============================================================
+
+    // 3. 入库耗材扣减
+    // ============================================================
+
+    /** 入库耗材扣减 ASN其他页签"包装材料消耗"=是，收货时系统自动根据包装材料信息扣减包材SKU库存 */
+    @Transactional(rollbackFor = Exception.class)
+    public List<ConsumableRecord> deductInboundConsumables(
+            String inboundNo,
+            String asnNo,
+            String skuCode,
+            String skuName,
+            BigDecimal productQty,
+            String ownerCode,
+            String warehouseCode,
+            String operator) {
+        log.info("入库耗材扣减: inboundNo={}, sku={}, 产品数量={}", inboundNo, skuCode, productQty);
+
+        // 检查是否开启在库包装处理（PAC_CTL参数）
+        String pacCtl = sysConfigService.getConfigValue(SysConfigService.PAC_CTL, "NONE");
+        if ("NONE".equals(pacCtl)) {
+            log.info("未开启包装材料消耗（PAC_CTL=NONE），跳过耗材扣减");
+            return Collections.emptyList();
+        }
+
+        // 查询产品包装关联
+        List<ProductPackaging> packagings = productPackagingMapper.selectBySku(skuCode);
+        if (packagings == null || packagings.isEmpty()) {
+            log.info("商品未配置包装关联: sku={}", skuCode);
+            return Collections.emptyList();
+        }
+
+        List<ConsumableRecord> records = new ArrayList<>();
+        for (ProductPackaging packaging : packagings) {
+            if (!"Y".equals(packaging.getEnabled())) {
+                continue;
+            }
+
+            // 查询耗材
+            Consumable consumable = consumableMapper.selectByCode(packaging.getConsumableCode());
+            if (consumable == null) {
+                log.warn("耗材不存在: code={}", packaging.getConsumableCode());
+                continue;
+            }
+
+            // 计算扣减数量 = 产品数量 * 单位用量
+            BigDecimal deductQty = productQty.multiply(packaging.getUsagePerUnit());
+            if (deductQty.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            // 检查库存是否充足
+            BigDecimal beforeStock = consumable.getCurrentStock();
+            if (beforeStock.compareTo(deductQty) < 0) {
+                log.warn(
+                        "耗材库存不足: code={}, 库存={}, 需扣减={}",
+                        consumable.getConsumableCode(),
+                        beforeStock,
+                        deductQty);
+                // 库存不足时按实际库存扣减
+                deductQty = beforeStock;
+            }
+
+            if (deductQty.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            // 扣减库存
+            BigDecimal afterStock = beforeStock.subtract(deductQty);
+            consumable.setCurrentStock(afterStock);
+            consumable.setUpdatedTime(LocalDateTime.now());
+            consumableMapper.updateById(consumable);
+
+            // 创建扣减记录
+            ConsumableRecord record =
+                    createRecord(
+                            consumable,
+                            "INBOUND",
+                            inboundNo,
+                            packaging.getPackagingCode(),
+                            deductQty,
+                            beforeStock,
+                            afterStock,
+                            operator);
+            record.setSkuCode(skuCode);
+            record.setSkuName(skuName);
+            record.setProductQty(productQty);
+            record.setUsagePerUnit(packaging.getUsagePerUnit());
+            record.setRefNo(asnNo);
+            record.setOwnerCode(ownerCode);
+            record.setWarehouseCode(warehouseCode);
+            consumableRecordMapper.updateById(record);
+
+            records.add(record);
+
+            // 库存预警检查
+            checkStockWarning(consumable);
+        }
+
+        log.info("入库耗材扣减完成: inboundNo={}, 扣减耗材数={}", inboundNo, records.size());
+        return records;
+    }
+
+    // ============================================================
+
+    // 4. 出库耗材扣减
+    // ============================================================
+
+    /** 出库耗材扣减（可选） 出库复核时扣减相关耗材 */
+    @Transactional(rollbackFor = Exception.class)
+    public List<ConsumableRecord> deductOutboundConsumables(
+            String outboundNo,
+            String skuCode,
+            String skuName,
+            BigDecimal productQty,
+            String ownerCode,
+            String warehouseCode,
+            String operator) {
+        log.info("出库耗材扣减: outboundNo={}, sku={}, 产品数量={}", outboundNo, skuCode, productQty);
+
+        // 检查是否开启出库耗材扣减（PAC_CTL参数=DEDUCT）
+        String pacCtl = sysConfigService.getConfigValue(SysConfigService.PAC_CTL, "NONE");
+        if (!"DEDUCT".equals(pacCtl)) {
+            log.info("未开启出库耗材扣减（PAC_CTL != DEDUCT），跳过");
+            return Collections.emptyList();
+        }
+
+        // 查询产品外包装关联（packagingLevel=3）
+        List<ProductPackaging> packagings = productPackagingMapper.selectBySkuAndLevel(skuCode, 3);
+        if (packagings == null || packagings.isEmpty()) {
+            log.info("商品未配置外包装关联: sku={}", skuCode);
+            return Collections.emptyList();
+        }
+
+        List<ConsumableRecord> records = new ArrayList<>();
+        for (ProductPackaging packaging : packagings) {
+            if (!"Y".equals(packaging.getEnabled())) {
+                continue;
+            }
+
+            Consumable consumable = consumableMapper.selectByCode(packaging.getConsumableCode());
+            if (consumable == null) {
+                continue;
+            }
+
+            BigDecimal deductQty = productQty.multiply(packaging.getUsagePerUnit());
+            if (deductQty.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            BigDecimal beforeStock = consumable.getCurrentStock();
+            if (beforeStock.compareTo(deductQty) < 0) {
+                deductQty = beforeStock;
+            }
+
+            if (deductQty.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            BigDecimal afterStock = beforeStock.subtract(deductQty);
+            consumable.setCurrentStock(afterStock);
+            consumable.setUpdatedTime(LocalDateTime.now());
+            consumableMapper.updateById(consumable);
+
+            ConsumableRecord record =
+                    createRecord(
+                            consumable,
+                            "OUTBOUND",
+                            outboundNo,
+                            packaging.getPackagingCode(),
+                            deductQty,
+                            beforeStock,
+                            afterStock,
+                            operator);
+            record.setSkuCode(skuCode);
+            record.setSkuName(skuName);
+            record.setProductQty(productQty);
+            record.setUsagePerUnit(packaging.getUsagePerUnit());
+            record.setOwnerCode(ownerCode);
+            record.setWarehouseCode(warehouseCode);
+            consumableRecordMapper.updateById(record);
+
+            records.add(record);
+            checkStockWarning(consumable);
+        }
+
+        log.info("出库耗材扣减完成: outboundNo={}, 扣减耗材数={}", outboundNo, records.size());
+        return records;
+    }
+
+    // ============================================================
+
+    // 5. 查询方法
+    // ============================================================
+
+    /** 查询耗材详情 */
+    public Consumable getConsumable(String consumableCode) {
+        return consumableMapper.selectByCode(consumableCode);
+    }
+
+    /** 查询所有耗材 */
+    public List<Consumable> getAllConsumables() {
+        return consumableMapper.selectList(
+                new LambdaQueryWrapper<Consumable>().orderByDesc(Consumable::getCreatedTime));
+    }
+
+    /** 查询耗材扣减记录 */
+    public List<ConsumableRecord> getRecordsByRefNo(String refNo) {
+        return consumableRecordMapper.selectByRefNo(refNo);
+    }
+
+    /** 查询库存不足的耗材 */
+    public List<Consumable> getLowStockConsumables() {
+        return consumableMapper.selectList(
+                new LambdaQueryWrapper<Consumable>()
+                        .eq(Consumable::getStatus, "ENABLED")
+                        .apply("current_stock <= safety_stock"));
+    }
+
+    // ============================================================
+
+    // 工具方法
+    // ============================================================
+
+    /** 创建耗材变动记录 */
+    private ConsumableRecord createRecord(
+            Consumable consumable,
+            String businessType,
+            String refNo,
+            String packagingCode,
+            BigDecimal deductQty,
+            BigDecimal beforeStock,
+            BigDecimal afterStock,
+            String operator) {
+        ConsumableRecord record = new ConsumableRecord();
+        record.setRecordNo(generateRecordNo());
+        record.setBusinessType(businessType);
+        record.setRefNo(refNo);
+        record.setConsumableCode(consumable.getConsumableCode());
+        record.setConsumableName(consumable.getConsumableName());
+        record.setConsumableType(consumable.getConsumableType());
+        record.setPackagingCode(packagingCode);
+        record.setDeductQty(deductQty);
+        record.setBeforeStock(beforeStock);
+        record.setAfterStock(afterStock);
+        record.setOperator(operator);
+        record.setOperateTime(LocalDateTime.now());
+        record.setCreatedBy(operator);
+        record.setCreatedTime(LocalDateTime.now());
+        consumableRecordMapper.insert(record);
+        return record;
+    }
+
+    /** 库存预警检查 */
+    private void checkStockWarning(Consumable consumable) {
+        if (consumable.getSafetyStock() != null
+                && consumable.getCurrentStock().compareTo(consumable.getSafetyStock()) <= 0) {
+            log.warn(
+                    "耗材库存预警: code={}, name={}, 当前库存={}, 安全库存={}",
+                    consumable.getConsumableCode(),
+                    consumable.getConsumableName(),
+                    consumable.getCurrentStock(),
+                    consumable.getSafetyStock());
+            // TODO: 触发库存预警通知
+        }
+    }
+
+    private String generateConsumableCode() {
+        return "CON"
+                + LocalDateTime.now().format(NO_FMT)
+                + String.format("%03d", SEQ.incrementAndGet() % 1000);
+    }
+
+    private String generatePackagingCode() {
+        return "PKG"
+                + LocalDateTime.now().format(NO_FMT)
+                + String.format("%03d", SEQ.incrementAndGet() % 1000);
+    }
+
+    private String generateRecordNo() {
+        return "CR"
+                + LocalDateTime.now().format(NO_FMT)
+                + String.format("%03d", SEQ.incrementAndGet() % 1000);
+    }
+}

@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: xwms-prod
+
+resources:
+  - ../../base
+  - canary.yaml
+
+patches:
+  - target:
+      kind: Deployment
+      name: wms-core
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 4
+      - op: replace
+        path: /spec/strategy/type
+        value: RollingUpdate
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxSurge
+        value: 1
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxUnavailable
+        value: 0
+
+configMapGenerator:
+  - name: wms-env
+    behavior: merge
+    literals:
+      - SPRING_PROFILES_ACTIVE=prod
+      - LOG_LEVEL=WARN
+      - JAVA_OPTS=-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xms1g -Xmx2g

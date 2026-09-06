@@ -1,0 +1,33 @@
+package com.xwms.core.performance.enums;
+
+import java.math.BigDecimal;
+
+import lombok.Getter;
+
+/** 绩效等级 */
+@Getter
+public enum PerformanceLevel {
+    S("S", "卓越(90-100)"),
+    A("A", "优秀(80-89)"),
+    B("B", "良好(70-79)"),
+    C("C", "合格(60-69)"),
+    D("D", "待改进(<60)");
+
+    private final String code;
+    private final String desc;
+
+    PerformanceLevel(String code, String desc) {
+        this.code = code;
+        this.desc = desc;
+    }
+
+    public static PerformanceLevel ofScore(BigDecimal score) {
+        if (score == null) return D;
+        int s = score.intValue();
+        if (s >= 90) return S;
+        if (s >= 80) return A;
+        if (s >= 70) return B;
+        if (s >= 60) return C;
+        return D;
+    }
+}
