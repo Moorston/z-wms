@@ -1,0 +1,519 @@
+# WMS AI Platform - 全量开发/部署环境 Docker Compose
+# PRD V2.0：6 中间件 + 12 FastAPI 服务
+# 修复端口冲突：MinIO 9000→9001(API)/9002(Console)，ClickHouse 8123/9000→9000(Native)/8123(HTTP)
+
+services:
+  # ===== 中间件层（6 个）=====
+
+  # 1. MySQL 8.0（PRD V2.0 主数据库）
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: wms_ai
+      MYSQL_USER: wms_ai
+      MYSQL_PASSWORD: wms_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./deploy/scripts/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "wms_ai", "-pwms_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 2. Redis 7
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # 3. Kafka（KRaft 模式，去 Zookeeper）
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: wms-ai-kafka-cluster
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 4. ClickHouse 24.3
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    ports:
+      - "8123:8123"  # HTTP 接口
+      - "9000:9000"  # Native 协议
+    environment:
+      CLICKHOUSE_DB: wms_ai
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./deploy/scripts/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 5. etcd（Milvus 依赖）
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: periodic
+      ETCD_AUTO_COMPACTION_RETENTION: "0"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_NAME: etcd1
+      ALLOW_NONE_AUTHENTICATION: "yes"
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 6. Milvus 2.4（向量数据库）
+  milvus:
+    image: milvusdb/milvus:v2.4.10
+    depends_on:
+      etcd:
+        condition: service_healthy
+    ports:
+      - "19530:19530"
+      - "9091:9091"  # MinIO 兼容端口（Milvus 内部）
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    command: ["milvus", "run", "standalone"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # 7. MinIO（对象存储，修复端口冲突：9000 被 ClickHouse Native 占用）
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9001:9000"   # S3 API → 宿主 9001
+      - "9002:9001"   # Web Console → 宿主 9002
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 8. Prometheus（AIOps 指标采集）
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  # ===== AI 平台服务层（12 个 FastAPI 服务）=====
+  # 所有服务复用通用 Dockerfile，通过 command 指定启动入口
+
+  # 9. 网关
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - OCR_SERVICE_URL=http://module-ocr:8101
+      - FORECAST_SERVICE_URL=http://module-forecast:8102
+      - REPORT_SERVICE_URL=http://module-report:8103
+      - RAG_SERVICE_URL=http://module-rag:8104
+      - AIOPS_SERVICE_URL=http://module-aiops:8105
+      - VOICE_SERVICE_URL=http://module-voice:8106
+      - DRONE_SERVICE_URL=http://module-drone:8107
+      - VIDEO_SERVICE_URL=http://module-video:8108
+      - MODEL_SERVICE_URL=http://model-service:8001
+      - DATA_SERVICE_URL=http://data-service:8002
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 10. 模型服务
+  model-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - ENV=development
+      - MOCK_MODE=true
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - LLM_API_KEY=${LLM_API_KEY:-sk-xxx}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-sk-xxx}
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "model_service.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 11. 数据服务
+  data-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=wms_ai
+      - MYSQL_PASSWORD=wms_password
+      - MYSQL_DATABASE=wms_ai
+      - CLICKHOUSE_HOST=clickhouse
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MINIO_ENDPOINT=minio:9000
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "data_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 12. 调度器
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MODEL_SERVICE_URL=http://model-service:8001
+      - FORECAST_SERVICE_URL=http://module-forecast:8102
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "scheduler.main:app", "--host", "0.0.0.0", "--port", "8003"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 13. OCR 模块
+  module-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8101:8101"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MINIO_ENDPOINT=minio:9000
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.ocr.main:app", "--host", "0.0.0.0", "--port", "8101"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 14. 预测模块
+  module-forecast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8102:8102"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - CLICKHOUSE_HOST=clickhouse
+      - MINIO_ENDPOINT=minio:9000
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.forecast.main:app", "--host", "0.0.0.0", "--port", "8102"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8102/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 15. 报表模块
+  module-report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8103:8103"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - CLICKHOUSE_HOST=clickhouse
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.report.main:app", "--host", "0.0.0.0", "--port", "8103"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8103/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 16. RAG 知识库模块
+  module-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8104:8104"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - MILVUS_HOST=milvus
+      - MINIO_ENDPOINT=minio:9000
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.rag.main:app", "--host", "0.0.0.0", "--port", "8104"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8104/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 17. AIOps 智能运维模块
+  module-aiops:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8105:8105"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - CLICKHOUSE_HOST=clickhouse
+      - MODEL_SERVICE_URL=http://model-service:8001
+      - PROMETHEUS_URL=http://prometheus:9090
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.aiops.main:app", "--host", "0.0.0.0", "--port", "8105"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8105/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 18. 语音拣货模块
+  module-voice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8106:8106"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.voice.main:app", "--host", "0.0.0.0", "--port", "8106"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8106/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 19. 无人机盘点模块
+  module-drone:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8107:8107"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+      - MINIO_ENDPOINT=minio:9000
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.drone.main:app", "--host", "0.0.0.0", "--port", "8107"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8107/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # 20. 视频分析模块
+  module-video:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8108:8108"
+    environment:
+      - ENV=development
+      - REDIS_HOST=redis
+      - CLICKHOUSE_HOST=clickhouse
+      - MINIO_ENDPOINT=minio:9000
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MODEL_SERVICE_URL=http://model-service:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "modules.video.main:app", "--host", "0.0.0.0", "--port", "8108"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8108/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:
+  clickhouse_data:
+  etcd_data:
+  milvus_data:
+  minio_data:
+  prometheus_data:

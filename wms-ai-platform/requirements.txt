@@ -1,0 +1,74 @@
+# WMS AI Platform - Python Dependencies
+# PRD V2.0 — 无GPU运行 + 商用API + MySQL数据层
+
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-multipart==0.0.12
+python-jose[cryptography]==3.3.0
+
+# HTTP Client
+httpx==0.27.2
+
+# Database
+oracledb==2.3.0  # @deprecated PRD V2.0 改用MySQL，保留兼容
+PyMySQL==1.1.1  # MySQL客户端（PRD V2.0 数据层）
+clickhouse-connect==0.7.19  # 0.7.20 不存在，PyPI 上 0.7.x 最高为 0.7.19
+sqlparse==0.5.3  # SQL AST安全校验（替代denylist方案，防止SQL注入）
+
+# Cache & Message
+redis==5.0.8
+kafka-python==2.0.2
+cachetools==5.5.0  # L1 本地缓存（TTLCache，Python Caffeine 替代）
+
+# Object Storage
+minio==7.2.10
+
+# AI - LLM（商用API, 无需本地GPU）
+openai==1.51.0  # 兼容vLLM OpenAI API
+sentence-transformers==3.1.1  # Embedding + CLIP零样本分类
+
+# AI - RAG向量库
+pymilvus==2.4.10
+
+# AI - Document Parsing（RAG知识库文档解析）
+pymupdf==1.24.10  # PDF解析（fitz）
+python-docx==1.1.2  # Word文档解析
+openpyxl==3.1.5  # Excel解析
+rank-bm25==0.2.2  # BM25关键词召回（混合检索）
+jieba==0.42.1  # 中文分词（RAG关键词召回）
+
+# AI - CV Core
+opencv-python==4.10.0.84
+numpy==1.26.4
+Pillow==10.4.0
+pandas==2.2.2
+scikit-learn==1.5.2
+
+# AI - GPU Optional（需要GPU环境，CPU模式可跳过）
+ultralytics==8.3.0  # 可选：需要GPU，CPU模式可跳过（YOLOv10目标检测）
+prophet==1.1.5  # 可选：需要GPU，CPU模式可跳过
+pyod==1.1.3  # 可选：需要GPU，CPU模式可跳过
+
+# Scheduling
+apscheduler==3.10.4
+
+# Utilities
+python-dotenv==1.0.1
+loguru==0.7.2
+tenacity==9.0.0
+
+# Monitoring
+prometheus-client==0.21.0
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0  # FastAPI自动追踪
+opentelemetry-exporter-otlp==1.27.0  # OTLP导出器
+
+# Dev
+pytest==8.3.3
+pytest-asyncio==0.24.0
+black==24.10.0
+isort==5.13.2

@@ -1,0 +1,768 @@
+# WMS AI Platform - K3s 部署清单
+# 包含：Namespace / ConfigMap / 所有服务Deployment+Service / Ingress
+
+---
+# ========== Namespace ==========
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wms-ai
+  labels:
+    app: wms-ai-platform
+
+---
+# ========== ConfigMap（环境变量） ==========
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wms-ai-config
+  namespace: wms-ai
+data:
+  ENV: "production"
+  LOG_LEVEL: "INFO"
+  REDIS_HOST: "redis.wms-ai.svc.cluster.local"
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.wms-ai.svc.cluster.local:9092"
+  CLICKHOUSE_HOST: "clickhouse.wms-ai.svc.cluster.local"
+  CLICKHOUSE_DATABASE: "wms_ai"
+  MINIO_ENDPOINT: "minio.wms-ai.svc.cluster.local:9000"
+  MINIO_BUCKET: "wms-ai"
+  MILVUS_HOST: "milvus.wms-ai.svc.cluster.local"
+  MODEL_SERVICE_URL: "http://model-service.wms-ai.svc.cluster.local:8001"
+  LLM_MODEL: "deepseek-v4-pro"
+  FORECAST_MODEL: "prophet"
+
+---
+# ========== Secret（敏感配置） ==========
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wms-ai-secret
+  namespace: wms-ai
+type: Opaque
+stringData:
+  # @deprecated PRD V2.0 改用 MySQL，保留兼容（Oracle 仅用于只读查询 WMS 历史数据）
+  ORACLE_USER: "wms_user"
+  ORACLE_PASSWORD: "change_me_in_production"
+  ORACLE_DSN: "oracle.db.svc.cluster.local:1521/ORCLPDB1"
+  MINIO_ACCESS_KEY: "minioadmin"
+  MINIO_SECRET_KEY: "change_me_in_production"
+  JWT_SECRET: "change-me-to-a-random-secret-key"
+  LLM_API_KEY: "sk-xxx"
+
+---
+# ========== 通用模板：Python FastAPI服务 ==========
+# 以下每个服务使用相同的部署模板，通过args区分启动命令
+
+---
+# API网关
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: wms-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+            - secretRef:
+                name: wms-ai-secret
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: wms-ai
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# 统一模型服务（纯 API 调用，无 GPU）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-service
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-service
+  template:
+    metadata:
+      labels:
+        app: model-service
+    spec:
+      containers:
+        - name: model-service
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "model_service.main:app", "--host", "0.0.0.0", "--port", "8001"]
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+            - secretRef:
+                name: wms-ai-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-service
+  namespace: wms-ai
+spec:
+  selector:
+    app: model-service
+  ports:
+    - port: 8001
+      targetPort: 8001
+  type: ClusterIP
+
+---
+# 数据服务
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-service
+  namespace: wms-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-service
+  template:
+    metadata:
+      labels:
+        app: data-service
+    spec:
+      containers:
+        - name: data-service
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "data_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+            - secretRef:
+                name: wms-ai-secret
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-service
+  namespace: wms-ai
+spec:
+  selector:
+    app: data-service
+  ports:
+    - port: 8002
+      targetPort: 8002
+
+---
+# 调度服务
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scheduler
+  template:
+    metadata:
+      labels:
+        app: scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "scheduler.main:app", "--host", "0.0.0.0", "--port", "8003"]
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler
+  namespace: wms-ai
+spec:
+  selector:
+    app: scheduler
+  ports:
+    - port: 8003
+      targetPort: 8003
+
+---
+# 单据OCR模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-ocr
+  namespace: wms-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: module-ocr
+  template:
+    metadata:
+      labels:
+        app: module-ocr
+    spec:
+      containers:
+        - name: module-ocr
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.ocr.main:app", "--host", "0.0.0.0", "--port", "8101"]
+          ports:
+            - containerPort: 8101
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+            - secretRef:
+                name: wms-ai-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8101
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-ocr
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-ocr
+  ports:
+    - port: 8101
+      targetPort: 8101
+
+---
+# 需求预测模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-forecast
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: module-forecast
+  template:
+    metadata:
+      labels:
+        app: module-forecast
+    spec:
+      containers:
+        - name: module-forecast
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.forecast.main:app", "--host", "0.0.0.0", "--port", "8102"]
+          ports:
+            - containerPort: 8102
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          volumeMounts:
+            - name: forecast-models
+              mountPath: /app/modules/forecast/models
+      volumes:
+        - name: forecast-models
+          persistentVolumeClaim:
+            claimName: forecast-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-forecast
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-forecast
+  ports:
+    - port: 8102
+      targetPort: 8102
+
+---
+# 自动化报表模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-report
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: module-report
+  template:
+    metadata:
+      labels:
+        app: module-report
+    spec:
+      containers:
+        - name: module-report
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.report.main:app", "--host", "0.0.0.0", "--port", "8103"]
+          ports:
+            - containerPort: 8103
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-report
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-report
+  ports:
+    - port: 8103
+      targetPort: 8103
+
+---
+# 智能问答RAG模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-rag
+  namespace: wms-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: module-rag
+  template:
+    metadata:
+      labels:
+        app: module-rag
+    spec:
+      containers:
+        - name: module-rag
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.rag.main:app", "--host", "0.0.0.0", "--port", "8104"]
+          ports:
+            - containerPort: 8104
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-rag
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-rag
+  ports:
+    - port: 8104
+      targetPort: 8104
+
+---
+# AIOps模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-aiops
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: module-aiops
+  template:
+    metadata:
+      labels:
+        app: module-aiops
+    spec:
+      containers:
+        - name: module-aiops
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.aiops.main:app", "--host", "0.0.0.0", "--port", "8105"]
+          ports:
+            - containerPort: 8105
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-aiops
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-aiops
+  ports:
+    - port: 8105
+      targetPort: 8105
+
+---
+# 语音拣货模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-voice
+  namespace: wms-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: module-voice
+  template:
+    metadata:
+      labels:
+        app: module-voice
+    spec:
+      containers:
+        - name: module-voice
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.voice.main:app", "--host", "0.0.0.0", "--port", "8106"]
+          ports:
+            - containerPort: 8106
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-voice
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-voice
+  ports:
+    - port: 8106
+      targetPort: 8106
+
+---
+# 无人机盘点模块
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-drone
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: module-drone
+  template:
+    metadata:
+      labels:
+        app: module-drone
+    spec:
+      containers:
+        - name: module-drone
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.drone.main:app", "--host", "0.0.0.0", "--port", "8107"]
+          ports:
+            - containerPort: 8107
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-drone
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-drone
+  ports:
+    - port: 8107
+      targetPort: 8107
+
+---
+# 打包视频分析模块（YOLOv10 CPU 模式，可选 GPU）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: module-video
+  namespace: wms-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: module-video
+  template:
+    metadata:
+      labels:
+        app: module-video
+    spec:
+      containers:
+        - name: module-video
+          image: wms-ai-platform:latest
+          command: ["python", "-m", "uvicorn", "modules.video.main:app", "--host", "0.0.0.0", "--port", "8108"]
+          ports:
+            - containerPort: 8108
+          envFrom:
+            - configMapRef:
+                name: wms-ai-config
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "4Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: module-video
+  namespace: wms-ai
+spec:
+  selector:
+    app: module-video
+  ports:
+    - port: 8108
+      targetPort: 8108
+
+---
+# ========== Ingress（统一入口） ==========
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wms-ai-ingress
+  namespace: wms-ai
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: ai.wms.local
+      http:
+        paths:
+          - path: /api/ocr
+            pathType: Prefix
+            backend:
+              service:
+                name: module-ocr
+                port:
+                  number: 8101
+          - path: /api/forecast
+            pathType: Prefix
+            backend:
+              service:
+                name: module-forecast
+                port:
+                  number: 8102
+          - path: /api/report
+            pathType: Prefix
+            backend:
+              service:
+                name: module-report
+                port:
+                  number: 8103
+          - path: /api/rag
+            pathType: Prefix
+            backend:
+              service:
+                name: module-rag
+                port:
+                  number: 8104
+          - path: /api/aiops
+            pathType: Prefix
+            backend:
+              service:
+                name: module-aiops
+                port:
+                  number: 8105
+          - path: /api/voice
+            pathType: Prefix
+            backend:
+              service:
+                name: module-voice
+                port:
+                  number: 8106
+          - path: /api/drone
+            pathType: Prefix
+            backend:
+              service:
+                name: module-drone
+                port:
+                  number: 8107
+          - path: /api/video
+            pathType: Prefix
+            backend:
+              service:
+                name: module-video
+                port:
+                  number: 8108
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forecast-models-pvc
+  namespace: wms-ai
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ========== HPA（自动扩缩容） ==========
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-hpa
+  namespace: wms-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ocr-hpa
+  namespace: wms-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: module-ocr
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
